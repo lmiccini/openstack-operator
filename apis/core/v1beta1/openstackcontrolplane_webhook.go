@@ -223,6 +223,7 @@ func (r *OpenStackControlPlane) checkDepsEnabled(name string) string {
 			reqs = "Galera, Keystone"
 		}
 	case "Octavia":
+		// TODO(beagles): So far we haven't declared Redis as dependency for Octavia, but we might.
 		if !((r.Spec.Galera.Enabled) && r.Spec.Memcached.Enabled && r.Spec.Rabbitmq.Enabled &&
 			r.Spec.Keystone.Enabled && r.Spec.Neutron.Enabled && r.Spec.Glance.Enabled && r.Spec.Nova.Enabled &&
 			r.Spec.Ovn.Enabled) {
@@ -873,6 +874,13 @@ func (r *OpenStackControlPlane) DefaultServices() {
 			r.Spec.Designate.Template = &designatev1.DesignateSpecCore{}
 		}
 		r.Spec.Designate.Template.Default()
+	}
+
+	// Redis
+	for key, template := range r.Spec.Redis.Templates {
+		template.Default()
+		// By-value copy, need to update
+		r.Spec.Redis.Templates[key] = template
 	}
 }
 
