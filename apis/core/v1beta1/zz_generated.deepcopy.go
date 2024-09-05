@@ -1497,10 +1497,14 @@ func (in *RedisSection) DeepCopyInto(out *RedisSection) {
 	*out = *in
 	if in.Templates != nil {
 		in, out := &in.Templates, &out.Templates
-		*out = make(map[string]redisv1beta1.RedisSpecCore, len(*in))
-		for key, val := range *in {
-			(*out)[key] = *val.DeepCopy()
-		}
+		*out = new(map[string]redisv1beta1.RedisSpecCore)
+                if **in != nil {
+                        in, out := *in, *out
+                        *out = make(map[string]redisv1beta1.RedisSpecCore, len(*in))
+                        for key, val := range *in {
+                                (*out)[key] = *val.DeepCopy()
+                        }
+                }		
 	}
 }
 

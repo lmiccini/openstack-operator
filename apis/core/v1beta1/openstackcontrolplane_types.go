@@ -796,7 +796,7 @@ type RedisSection struct {
 	// +kubebuilder:validation:Optional
 	//+operator-sdk:csv:customresourcedefinitions:type=spec
 	// Templates - Overrides to use when creating the Redis Resources
-	Templates map[string]redisv1.RedisSpecCore `json:"templates,omitempty"`
+	Templates *map[string]redisv1.RedisSpecCore `json:"templates,omitempty"`
 }
 
 // OpenStackClientSection defines the desired state of the OpenStackClient

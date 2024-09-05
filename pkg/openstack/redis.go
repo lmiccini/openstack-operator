@@ -68,6 +68,10 @@ func ReconcileRedis(
 		return ctrl.Result{}, err
 	}
 
+        if instance.Spec.Redis.Templates == nil {
+                instance.Spec.Redis.Templates = ptr.To(map[string]redisv1.RedisSpecCore{})
+        }
+
 	for _, redis := range redises.Items {
 		for _, ref := range redis.GetOwnerReferences() {
 			// Check owner UID to ensure the redis instance is owned by this OpenStackControlPlane instance
@@ -75,7 +79,7 @@ func ReconcileRedis(
 				owned := false
 
 				// Check whether the name appears in spec
-				for name := range instance.Spec.Redis.Templates {
+				for name := range *instance.Spec.Redis.Templates {
 					if name == redis.GetName() {
 						owned = true
 						break
@@ -104,7 +108,7 @@ func ReconcileRedis(
 	var err error
 	var status redisStatus
 
-	for name, spec := range instance.Spec.Redis.Templates {
+	for name, spec := range *instance.Spec.Redis.Templates {
 		status, ctrlResult, err = reconcileRedis(ctx, instance, version, helper, name, &spec)
 
 		switch status {
