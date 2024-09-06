@@ -188,6 +188,12 @@ func reconcileRedis(
 				fmt.Sprintf("redis-%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
 				fmt.Sprintf("*.redis-%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
 			},
+                        Usages: []certmgrv1.KeyUsage{
+                                "key encipherment",
+                                "digital signature",
+                                "server auth",
+                                "client auth",
+                        },
 		}
 		if instance.Spec.TLS.PodLevel.Internal.Cert.Duration != nil {
 			certRequest.Duration = &instance.Spec.TLS.PodLevel.Internal.Cert.Duration.Duration
