@@ -240,3 +240,16 @@ func reconcileRedis(
 
 	return redisCreating, ctrl.Result{}, nil
 }
+
+// RedisImageMatch - return true if the redis images match on the ControlPlane and Version, or if Redis is not enabled
+func RedisImageMatch(ctx context.Context, controlPlane *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) bool {
+        Log := GetLogger(ctx)
+        if controlPlane.Spec.Redis.Enabled {
+                if !stringPointersEqual(controlPlane.Status.ContainerImages.InfraRedisImage, version.Status.ContainerImages.InfraRedisImage) {
+                        Log.Info("Redis images do not match", "controlPlane.Status.ContainerImages.InfraRedisImage", controlPlane.Status.ContainerImages.InfraRedisImage, "version.Status.ContainerImages.InfraRedisImage", version.Status.ContainerImages.InfraRedisImage)
+                        return false
+                }
+        }
+
+        return true
+}

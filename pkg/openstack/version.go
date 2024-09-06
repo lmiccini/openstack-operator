@@ -266,6 +266,9 @@ func ControlplaneContainerImageMatch(ctx context.Context, controlPlane *corev1be
 	if MemcachedImageMatch(ctx, controlPlane, version) {
 		failedMatches = append(failedMatches, "Memcached")
 	}
+	if RedisImageMatch(ctx, controlPlane, version) {
+		failedMatches = append(failedMatches, "Redis")
+	}
 	if NeutronImageMatch(ctx, controlPlane, version) {
 		failedMatches = append(failedMatches, "Neutron")
 	}
