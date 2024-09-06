@@ -183,10 +183,10 @@ func reconcileRedis(
 			IssuerName: instance.GetInternalIssuer(),
 			CertName:   fmt.Sprintf("%s-svc", redis.Name),
 			Hostnames: []string{
-				fmt.Sprintf("%s.%s.svc", name, instance.Namespace),
-				fmt.Sprintf("*.%s.%s.svc", name, instance.Namespace),
-				fmt.Sprintf("%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
-				fmt.Sprintf("*.%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
+				fmt.Sprintf("redis-%s.%s.svc", name, instance.Namespace),
+				fmt.Sprintf("*.redis-%s.%s.svc", name, instance.Namespace),
+				fmt.Sprintf("redis-%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
+				fmt.Sprintf("*.redis-%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
 			},
 		}
 		if instance.Spec.TLS.PodLevel.Internal.Cert.Duration != nil {
