@@ -189,6 +189,9 @@ func reconcileRedis(
 				fmt.Sprintf("redis-%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
 				fmt.Sprintf("*.redis-%s.%s.svc.%s", name, instance.Namespace, ClusterInternalDomain),
 			},
+                        Subject: &certmgrv1.X509Subject{
+                                Organizations: []string{fmt.Sprintf("%s.%s", instance.Namespace, ClusterInternalDomain)},
+                        },
                         Usages: []certmgrv1.KeyUsage{
                                 "key encipherment",
                                 "digital signature",
