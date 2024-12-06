@@ -64,6 +64,8 @@ const (
 	OvnDbCaName = tls.DefaultCAPrefix + "ovn"
 	// LibvirtCaName -
 	LibvirtCaName = tls.DefaultCAPrefix + "libvirt"
+	// MemcachedCaName -
+	MemcachedCaName = tls.DefaultCAPrefix + "memcached"
 
 	// GlanceName - Default Glance name
 	GlanceName = "glance"
@@ -91,7 +93,7 @@ type OpenStackControlPlaneSpec struct {
 
 	// +kubebuilder:validation:Optional
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	// +kubebuilder:default={ingress: {enabled: true, ca: {duration: "87600h"}, cert: {duration: "43800h"}}, podLevel: {enabled: true, internal:{ca: {duration: "87600h"}, cert: {duration: "43800h"}}, libvirt: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}, ovn: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}}}
+	// +kubebuilder:default={ingress: {enabled: true, ca: {duration: "87600h"}, cert: {duration: "43800h"}}, podLevel: {enabled: true, internal:{ca: {duration: "87600h"}, cert: {duration: "43800h"}}, libvirt: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}, ovn: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}, memcached: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}}}
 	// TLS - Parameters related to the TLS
 	TLS TLSSection `json:"tls"`
 
@@ -222,7 +224,7 @@ type TLSSection struct {
 
 	// +kubebuilder:validation:optional
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	// +kubebuilder:default={enabled: true, internal:{ca: {duration: "87600h"}, cert: {duration: "43800h"}}, libvirt: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}, ovn: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}}
+	// +kubebuilder:default={enabled: true, internal:{ca: {duration: "87600h"}, cert: {duration: "43800h"}}, libvirt: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}, ovn: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}, memcached: {ca: {duration: "87600h"}, cert: {duration: "43800h"}}}
 	PodLevel TLSPodLevelConfig `json:"podLevel,omitempty"`
 
 	// +kubebuilder:validation:optional
@@ -272,6 +274,12 @@ type TLSPodLevelConfig struct {
 	// +kubebuilder:default={ca: {duration: "87600h"}, cert: {duration: "43800h"}}
 	// Ovn - CA used for all OVN services on OpenStackControlPlane and OpenStackDataplane
 	Ovn CertSection `json:"ovn"`
+
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	// +kubebuilder:default={ca: {duration: "87600h"}, cert: {duration: "43800h"}}
+	// Memcached - CA used for all services on OpenStackControlPlane and OpenStackDataplane to authenticate to Memcached
+	Memcached CertSection `json:"memcached"`
 }
 
 // CertSection defines details for CA config and its certs
@@ -974,6 +982,16 @@ func (instance OpenStackControlPlane) GetLibvirtIssuer() string {
 	}
 
 	return LibvirtCaName
+}
+
+// GetMemcachedIssuer - returns the memcached CA issuer name or custom if configured
+func (instance OpenStackControlPlane) GetMemcachedIssuer() string {
+       // use custom issuer if set
+       if instance.Spec.TLS.PodLevel.Memcached.Ca.IsCustomIssuer() {
+               return *instance.Spec.TLS.PodLevel.Memcached.Ca.CustomIssuer
+       }
+
+       return MemcachedCaName
 }
 
 // GetDurationHours - returns the duration in hours

@@ -81,6 +81,8 @@ github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
 github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
+github.com/lmiccini/lib-common/modules/certmanager v0.0.0-20241206105757-71ca6a586153 h1:DyeJcmDHy0MWbyIwKPysG3JCo2pBYGNiI93F07ui4EU=
+github.com/lmiccini/lib-common/modules/certmanager v0.0.0-20241206105757-71ca6a586153/go.mod h1:MdZhEe4ciAXJwWygYBMJCIVONZWv+MqBIp/0+LxFcS0=
 github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/metal3-io/baremetal-operator/apis v0.6.2 h1:/szSfHXW9+ocxy61J+54VIHsGeOFI9T9JHKdFfjR3jI=
@@ -120,8 +122,6 @@ github.com/openstack-k8s-operators/keystone-operator/api v0.5.1-0.20241122081244
 github.com/openstack-k8s-operators/keystone-operator/api v0.5.1-0.20241122081244-322aab6fa1e8/go.mod h1:AZhHY6dZzGyG9iVOf1poD7pTS9c7ZG/f99Fg+GdFVEk=
 github.com/openstack-k8s-operators/lib-common/modules/ansible v0.5.0 h1:M6tou1UD+en6fcZtV64RPsDVdHH5up6oqtENDU8dRyE=
 github.com/openstack-k8s-operators/lib-common/modules/ansible v0.5.0/go.mod h1:FxA/2ChDnVKgbZAyiiRLDGZB7WMcrHlOMBZYUQGgRf0=
-github.com/openstack-k8s-operators/lib-common/modules/certmanager v0.5.1-0.20241114091812-6dc9fd0961dc h1:HrpfpMSk8mnb/fC6TswLxL0RK7u6dw9LbXsFdH+1DCo=
-github.com/openstack-k8s-operators/lib-common/modules/certmanager v0.5.1-0.20241114091812-6dc9fd0961dc/go.mod h1:MdZhEe4ciAXJwWygYBMJCIVONZWv+MqBIp/0+LxFcS0=
 github.com/openstack-k8s-operators/lib-common/modules/common v0.5.1-0.20241114091812-6dc9fd0961dc h1:Ufa/q/nC9wmKblvsc0kJppsXHOJoY4fbUamb3ItWCOk=
 github.com/openstack-k8s-operators/lib-common/modules/common v0.5.1-0.20241114091812-6dc9fd0961dc/go.mod h1:YpNTuJhDWhbXM50O3qBkhO7M+OOyRmWkNVmJ4y3cyFs=
 github.com/openstack-k8s-operators/lib-common/modules/openstack v0.5.1-0.20241114091812-6dc9fd0961dc h1:q68lNZwCrKgLgcakrDu5VtpiWuC1pzQZKlb1M33EPMI=

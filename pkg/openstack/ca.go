@@ -405,6 +405,81 @@ func ReconcileCAs(ctx context.Context, instance *corev1.OpenStackControlPlane, h
 		}
 	}
 
+	// create CA for memcached
+	issuerLabels = map[string]string{certmanager.RootCAIssuerMemcachedLabel: ""}
+	issuerAnnotations = getIssuerAnnotations(&instance.Spec.TLS.PodLevel.Memcached.Cert)
+	if !instance.Spec.TLS.PodLevel.Memcached.Ca.IsCustomIssuer() {
+		// remove issuerLabels from any custom issuer in the namespace.
+		err := removeIssuerLabel(
+			ctx,
+			helper,
+			corev1.MemcachedCaName,
+			instance.Namespace,
+			issuerLabels,
+		)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		ctrlResult, err = ensureRootCA(
+			ctx,
+			instance,
+			helper,
+			issuerReq,
+			corev1.MemcachedCaName,
+			issuerLabels,
+			issuerAnnotations,
+			bundle,
+			caOnlyBundle,
+			instance.Spec.TLS.PodLevel.Memcached.Ca,
+		)
+		if err != nil {
+			return ctrlResult, err
+		} else if (ctrlResult != ctrl.Result{}) {
+			return ctrlResult, nil
+		}
+	} else {
+		customIssuer := *instance.Spec.TLS.PodLevel.Memcached.Ca.CustomIssuer
+		// add CA labelselector to issuer
+		caCertSecretName, err := addIssuerLabelAnnotation(ctx, helper, customIssuer, instance.Namespace, issuerLabels, issuerAnnotations)
+		if err != nil {
+			instance.Status.Conditions.Set(condition.FalseCondition(
+				corev1.OpenStackControlPlaneCAReadyCondition,
+				condition.ErrorReason,
+				condition.SeverityWarning,
+				corev1.OpenStackControlPlaneCAReadyErrorMessage,
+				"issuer",
+				customIssuer,
+				err.Error()))
+			if k8s_errors.IsNotFound(err) {
+				timeout := time.Second * 10
+				Log.Info(fmt.Sprintf("Custom Issuer %s not found, reconcile in %s", customIssuer, timeout.String()))
+
+				return ctrl.Result{RequeueAfter: timeout}, nil
+			}
+
+			return ctrlResult, err
+		}
+
+		caCert, ctrlResult, err := getCAFromSecret(ctx, instance, helper, caCertSecretName)
+		if err != nil {
+			return ctrl.Result{}, err
+		} else if (ctrlResult != ctrl.Result{}) {
+			return ctrlResult, nil
+		}
+
+		ctrlResult, err = ensureCaBundles(
+			instance,
+			customIssuer,
+			caCert,
+			bundle,
+			caOnlyBundle,
+		)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	instance.Status.Conditions.MarkTrue(corev1.OpenStackControlPlaneCAReadyCondition, corev1.OpenStackControlPlaneCAReadyMessage)
 
 	// create/update combined CA secret
