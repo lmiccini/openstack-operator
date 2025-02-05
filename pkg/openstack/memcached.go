@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	certmgrv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	memcachedv1 "github.com/openstack-k8s-operators/infra-operator/apis/memcached/v1beta1"
 	"github.com/openstack-k8s-operators/lib-common/modules/certmanager"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/clusterdns"
@@ -167,6 +168,7 @@ func reconcileMemcached(
 	Log.Info("Reconciling Memcached", "Memcached.Namespace", instance.Namespace, "Memcached.Name", name)
 
 	tlsCert := ""
+	tlsCert2 := ""
 	if instance.Spec.TLS.PodLevel.Enabled {
 		Log.Info("Reconciling Memcached TLS", "Memcached.Namespace", instance.Namespace, "Memcached.Name", name)
 		clusterDomain := clusterdns.GetDNSClusterDomain()
@@ -199,6 +201,44 @@ func reconcileMemcached(
 		}
 
 		tlsCert = certSecret.Name
+
+		// mTLS cert
+		if instance.Spec.Memcached.SslVerifyMode != "" && instance.Spec.Memcached.SslVerifyMode != "None" {
+			Log.Info("Reconciling Memcached mTLS", "Memcached.Namespace", instance.Namespace, "Memcached.Name", name)
+			//clusterDomain = clusterdns.GetDNSClusterDomain()
+			certRequest = certmanager.CertificateRequest{
+				IssuerName: instance.GetInternalIssuer(),
+				CertName:   fmt.Sprintf("%s-mtls", memcached.Name),
+				Hostnames: []string{
+					fmt.Sprintf("*.openstack.svc"),
+					fmt.Sprintf("*.openstack.svc.cluster.local"),
+				},
+				Labels: map[string]string{serviceCertSelector: ""},
+				Usages: []certmgrv1.KeyUsage{
+					certmgrv1.UsageKeyEncipherment,
+					certmgrv1.UsageDigitalSignature,
+					certmgrv1.UsageClientAuth,
+				},
+			}
+			if instance.Spec.TLS.PodLevel.Internal.Cert.Duration != nil {
+				certRequest.Duration = &instance.Spec.TLS.PodLevel.Internal.Cert.Duration.Duration
+			}
+			if instance.Spec.TLS.PodLevel.Internal.Cert.RenewBefore != nil {
+				certRequest.RenewBefore = &instance.Spec.TLS.PodLevel.Internal.Cert.RenewBefore.Duration
+			}
+			certSecret, ctrlResult, err = certmanager.EnsureCert(
+				ctx,
+				helper,
+				certRequest,
+				nil)
+			if err != nil {
+				return memcachedFailed, ctrlResult, err
+			} else if (ctrlResult != ctrl.Result{}) {
+				return memcachedCreating, ctrlResult, nil
+			}
+
+			tlsCert2 = certSecret.Name
+		}
 	}
 
 	if spec.NodeSelector == nil {
@@ -210,6 +250,9 @@ func reconcileMemcached(
 
 		if tlsCert != "" {
 			memcached.Spec.TLS.SecretName = ptr.To(tlsCert)
+		}
+		if tlsCert2 != "" {
+			memcached.Spec.TLS.MTLS.AuthCertSecret = ptr.To(tlsCert2)
 		}
 		memcached.Spec.TLS.CaBundleSecretName = tls.CABundleSecret
 		memcached.Spec.ContainerImage = *version.Status.ContainerImages.InfraMemcachedImage
