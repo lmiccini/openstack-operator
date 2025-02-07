@@ -7237,6 +7237,13 @@ spec:
                   enabled:
                     default: true
                     type: boolean
+                  sslVerifyMode:
+                    default: None
+                    enum:
+                    - None
+                    - Request
+                    - Require
+                    type: string
                   templates:
                     additionalProperties:
                       properties:
@@ -7262,6 +7269,20 @@ spec:
                           properties:
                             caBundleSecretName:
                               type: string
+                            mtls:
+                              properties:
+                                authcertsecret:
+                                  properties:
+                                    secretName:
+                                      type: string
+                                  type: object
+                                sslVerifyMode:
+                                  enum:
+                                  - None
+                                  - Request
+                                  - Require
+                                  type: string
+                              type: object
                             secretName:
                               type: string
                           type: object
