@@ -252,6 +252,7 @@ func reconcileMemcached(
 			memcached.Spec.TLS.SecretName = ptr.To(tlsCert)
 		}
 		if tlsCert2 != "" {
+			memcached.Spec.TLS.MTLS.SslVerifyMode = instance.Spec.Memcached.SslVerifyMode
 			memcached.Spec.TLS.MTLS.AuthCertSecret.SecretName = ptr.To(tlsCert2)
 		}
 		memcached.Spec.TLS.CaBundleSecretName = tls.CABundleSecret
