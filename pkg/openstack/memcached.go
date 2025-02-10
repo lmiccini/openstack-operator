@@ -203,7 +203,7 @@ func reconcileMemcached(
 		tlsCert = certSecret.Name
 
 		// mTLS cert
-		if instance.Spec.Memcached.SslVerifyMode != "" && instance.Spec.Memcached.SslVerifyMode != "None" {
+		if memcached.Spec.TLS.MTLS.SslVerifyMode != "" && memcached.Spec.TLS.MTLS.SslVerifyMode != "None" {
 			Log.Info("Reconciling Memcached mTLS", "Memcached.Namespace", instance.Namespace, "Memcached.Name", name)
 			//clusterDomain = clusterdns.GetDNSClusterDomain()
 			certRequest = certmanager.CertificateRequest{
@@ -252,7 +252,6 @@ func reconcileMemcached(
 			memcached.Spec.TLS.SecretName = ptr.To(tlsCert)
 		}
 		if tlsCert2 != "" {
-			memcached.Spec.TLS.MTLS.SslVerifyMode = instance.Spec.Memcached.SslVerifyMode
 			memcached.Spec.TLS.MTLS.AuthCertSecret.SecretName = ptr.To(tlsCert2)
 		}
 		memcached.Spec.TLS.CaBundleSecretName = tls.CABundleSecret

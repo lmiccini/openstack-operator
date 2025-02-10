@@ -7237,13 +7237,6 @@ spec:
                   enabled:
                     default: true
                     type: boolean
-                  sslVerifyMode:
-                    default: None
-                    enum:
-                    - None
-                    - Request
-                    - Require
-                    type: string
                   templates:
                     additionalProperties:
                       properties:

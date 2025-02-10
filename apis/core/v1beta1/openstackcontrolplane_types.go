@@ -496,12 +496,6 @@ type MemcachedSection struct {
 	Enabled bool `json:"enabled"`
 
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Enum="None";"Request";"Require"
-	// +kubebuilder:default="None"
-	// Used to enforce client side tls cert validation
-	SslVerifyMode string `json:"sslVerifyMode"`
-
-	// +kubebuilder:validation:Optional
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// Templates - Overrides to use when creating the Memcached databases
 	Templates *map[string]memcachedv1.MemcachedSpecCore `json:"templates,omitempty"`
