@@ -123,6 +123,13 @@ func SetupEnv() {
 // +kubebuilder:rbac:groups="monitoring.coreos.com",resources=servicemonitors,verbs=list;get;watch;update;create
 // +kubebuilder:rbac:groups=operators.coreos.com,resources=clusterserviceversions;subscriptions;installplans;operators,verbs=get;list;delete;
 
+// Messaging topology operator resources
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings;exchanges;federations;operatorpolicies;permissions;policies;queues;schemareplications;shovels;superstreams;topicpermissions;users;vhosts,verbs=create;delete;get;list;patch;update;watch
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings/finalizers;exchanges/finalizers;federations/finalizers;operatorpolicies/finalizers;permissions/finalizers;policies/finalizers;queues/finalizers;schemareplications/finalizers;shovels/finalizers;superstreams/finalizers;topicpermissions/finalizers;users/finalizers;vhosts/finalizers,verbs=update
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings/status;exchanges/status;federations/status;operatorpolicies/status;permissions/status;policies/status;queues/status;schemareplications/status;shovels/status;superstreams/status;topicpermissions/status;users/status;vhosts/status,verbs=get;patch;update
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=rabbitmqclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=rabbitmqclusters/status,verbs=get
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
@@ -647,6 +654,15 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
+	// messaging-topology-operator
+	messagingTopologyOperator := operator.Operator{}
+	idx, op = operator.GetOperator(serviceOperators, operatorv1beta1.MessagingTopologyOperatorName)
+	if idx >= 0 {
+		messagingTopologyOperator = op
+		// remove messaging-topology-operator from serviceOperators
+		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
+	}
+
 	data := bindata.MakeRenderData()
 
 	// global stuff
@@ -654,6 +670,9 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 
 	// rabbitmaq-cluster-operator-manager image rabbit.yaml
 	data.Data["RabbitmqOperator"] = rabbitmqOperator
+
+	// messaging-topology-operator-manager image messaging-topology.yaml
+	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
 	// openstack-operator-controller-manager image operator.yaml
 	data.Data["OpenStackOperator"] = openstackOperator

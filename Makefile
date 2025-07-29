@@ -158,6 +158,7 @@ bindata: kustomize yq ## Call sync bindata script
 	sed -i bindata/operator/operator.yaml -e "s|kube-rbac-proxy:replace_me.*|'{{ .OpenStackOperator.Deployment.KubeRbacProxy.Image }}'|"
 	cp config/operator/managers.yaml bindata/operator/
 	cp config/operator/rabbit.yaml bindata/operator/
+	cp config/operator/messaging-topology.yaml bindata/operator/
 	$(KUSTOMIZE) build config/rbac > bindata/rbac/rbac.yaml
 	/bin/bash hack/sync-bindata.sh
 

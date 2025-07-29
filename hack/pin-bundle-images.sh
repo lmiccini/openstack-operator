@@ -85,8 +85,10 @@ for MOD_PATH in ${MOD_PATHS}; do
         echo -n ",${REPO_URL}/${BASE}-operator-bundle:$SHA"
     fi
 done
-# append the rabbitmq URL only if we aren't in Dockerfile mode
+# append the rabbitmq and messaging-topology URLs only if we aren't in Dockerfile mode
 if [ -z "$DOCKERFILE" ]; then
     # pin rabbit to sha256 for our v2.9.0_patches fork
     echo -n ",quay.io/openstack-k8s-operators/rabbitmq-cluster-operator-bundle@sha256:bad31e1b028840ac3c199efc3a8ecb3c87bdb68e6a11c8e32a7dbcd5a4d4114d"
+    # pin messaging-topology-operator bundle
+    echo -n ",quay.io/lmiccini/messaging-topology-operator-bundle:latest"
 fi
