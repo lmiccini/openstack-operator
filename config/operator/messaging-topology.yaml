@@ -54,10 +54,12 @@ spec:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
           readOnly: true
+        {{- if .MessagingTopologyOperator.CaBundle }}
         - mountPath: /etc/ssl/certs/messaging-topology-ca-bundle.crt
           name: ca-bundle
           readOnly: true
           subPath: messaging-topology-ca-bundle.crt
+        {{- end }}
       securityContext:
         runAsNonRoot: true
       serviceAccountName: messaging-topology-operator-controller-manager
@@ -66,7 +68,9 @@ spec:
       - name: cert
         secret:
           defaultMode: 420
-          secretName: messaging-topology-webhook-server-cert
+          secretName: messaging-topology-operator-webhook-server-cert
+      {{- if .MessagingTopologyOperator.CaBundle }}
       - configMap:
           name: messaging-topology-ca-bundle
-        name: ca-bundle 
+        name: ca-bundle
+      {{- end }} 
