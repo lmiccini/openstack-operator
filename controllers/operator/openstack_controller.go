@@ -655,12 +655,13 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
-	// messaging-topology-operator
+	// messaging-topology-operator is now handled by its own dedicated controller
+	// but we still need to provide template data for rendering
 	messagingTopologyOperator := operator.Operator{}
 	idx, op = operator.GetOperator(serviceOperators, operatorv1beta1.MessagingTopologyOperatorName)
 	if idx >= 0 {
 		messagingTopologyOperator = op
-		// remove messaging-topology-operator from serviceOperators
+		// remove messaging-topology-operator from serviceOperators to avoid duplicate management
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
@@ -672,7 +673,7 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	// rabbitmaq-cluster-operator-manager image rabbit.yaml
 	data.Data["RabbitmqOperator"] = rabbitmqOperator
 
-	// messaging-topology-operator-manager image messaging-topology.yaml
+	// messaging-topology-operator template data (handled by dedicated controller)
 	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
 	// openstack-operator-controller-manager image operator.yaml
@@ -710,6 +711,11 @@ func (r *OpenStackReconciler) renderAndApply(
 		// RenderDir seems to add an extra null entry to the list. It appears to be because of the
 		// nested templates. This just makes sure we don't try to apply an empty obj.
 		if obj.GetName() == "" {
+			continue
+		}
+
+		// Skip only the messaging-topology-operator deployment - handled by dedicated controller
+		if obj.GetKind() == "Deployment" && obj.GetName() == "messaging-topology-operator" {
 			continue
 		}
 		if setControllerReference {

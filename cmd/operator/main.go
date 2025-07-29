@@ -160,11 +160,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&operatorcontrollers.RabbitMQCAReconciler{
+	if err = (&operatorcontrollers.MessagingTopologyReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "RabbitMQCA")
+		setupLog.Error(err, "unable to create controller", "controller", "MessagingTopology")
 		os.Exit(1)
 	}
 	operatorcontrollers.SetupEnv()
