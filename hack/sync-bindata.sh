@@ -103,6 +103,10 @@ metadata:
   namespace: '{{ .OperatorNamespace }}'
 spec:
   selfSigned: {}
+EOF_CAT
+
+if [[ -n "$MUTATING_WEBHOOKS" ]]; then
+cat >> operator/$OPERATOR_NAME-webhooks.yaml <<EOF_CAT
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
@@ -120,6 +124,11 @@ metadata:
   name: $OPERATOR_NAME-mutating-webhook-configuration
 webhooks:
 ${MUTATING_WEBHOOKS}
+EOF_CAT
+fi
+
+if [[ -n "$VALIDATING_WEBHOOKS" ]]; then
+cat >> operator/$OPERATOR_NAME-webhooks.yaml <<EOF_CAT
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
@@ -138,6 +147,7 @@ metadata:
 webhooks:
 ${VALIDATING_WEBHOOKS}
 EOF_CAT
+fi
 
 }
 

@@ -66,7 +66,7 @@ spec:
       - name: cert
         secret:
           defaultMode: 420
-          secretName: messaging-topology-webhook-server-cert
-      - configMap:
-          name: messaging-topology-ca-bundle
-        name: ca-bundle 
+          secretName: messaging-topology-operator-webhook-server-cert
+      - name: ca-bundle
+        secret:
+          secretName: messaging-topology-ca-bundle 

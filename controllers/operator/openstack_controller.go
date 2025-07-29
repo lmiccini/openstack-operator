@@ -129,6 +129,7 @@ func SetupEnv() {
 // +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings/status;exchanges/status;federations/status;operatorpolicies/status;permissions/status;policies/status;queues/status;schemareplications/status;shovels/status;superstreams/status;topicpermissions/status;users/status;vhosts/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=rabbitmq.com,resources=rabbitmqclusters,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rabbitmq.com,resources=rabbitmqclusters/status,verbs=get
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -928,7 +929,6 @@ func (r *OpenStackReconciler) postCleanupObsoleteResources(ctx context.Context, 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *OpenStackReconciler) SetupWithManager(mgr ctrl.Manager) error {
-
 	return ctrl.NewControllerManagedBy(mgr).
 		Owns(&appsv1.Deployment{}).
 		For(&operatorv1beta1.OpenStack{}).
