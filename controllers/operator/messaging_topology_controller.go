@@ -34,24 +34,26 @@ type MessagingTopologyReconciler struct {
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 func (r *MessagingTopologyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Get CA certificates from RabbitMQ clusters
+	// Get CA certificates from RabbitMQ clusters (gracefully handle missing CRDs)
+	caCerts := []string{}
 	rabbitClusters := &uns.UnstructuredList{}
 	rabbitClusters.SetGroupVersionKind(schema.GroupVersionKind{Group: "rabbitmq.com", Version: "v1beta1", Kind: "RabbitmqClusterList"})
-	r.Client.List(ctx, rabbitClusters)
 
-	caCerts := []string{}
-	for _, cluster := range rabbitClusters.Items {
-		if tls, found, _ := uns.NestedMap(cluster.Object, "spec", "tls"); found {
-			if caSecretName, found, _ := uns.NestedString(tls, "caSecretName"); found && caSecretName != "" {
-				caSecret := &corev1.Secret{}
-				if r.Client.Get(ctx, client.ObjectKey{Name: caSecretName, Namespace: cluster.GetNamespace()}, caSecret) == nil {
-					if caCert, exists := caSecret.Data["ca.crt"]; exists {
-						caCerts = append(caCerts, string(caCert))
+	if err := r.Client.List(ctx, rabbitClusters); err == nil {
+		for _, cluster := range rabbitClusters.Items {
+			if tls, found, _ := uns.NestedMap(cluster.Object, "spec", "tls"); found {
+				if caSecretName, found, _ := uns.NestedString(tls, "caSecretName"); found && caSecretName != "" {
+					caSecret := &corev1.Secret{}
+					if r.Client.Get(ctx, client.ObjectKey{Name: caSecretName, Namespace: cluster.GetNamespace()}, caSecret) == nil {
+						if caCert, exists := caSecret.Data["ca.crt"]; exists {
+							caCerts = append(caCerts, string(caCert))
+						}
 					}
 				}
 			}
 		}
 	}
+	// If RabbitMQ CRDs don't exist, caCerts will be empty (which is fine)
 
 	bundleData := strings.Join(caCerts, "\n")
 
@@ -60,7 +62,7 @@ func (r *MessagingTopologyReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	r.Client.List(ctx, openstackList)
 
 	for _, openstack := range openstackList.Items {
-		// Create/update CA bundle secret with proper owner reference
+		// Always create CA bundle secret (even if empty) so deployment can mount it
 		caSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "messaging-topology-ca-bundle", Namespace: openstack.Namespace},
 			Data:       map[string][]byte{"messaging-topology-ca-bundle.crt": []byte(bundleData)},
@@ -226,24 +228,9 @@ func (r *MessagingTopologyReconciler) renderAndApply(ctx context.Context, instan
 }
 
 func (r *MessagingTopologyReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	rabbitmq := &uns.Unstructured{}
-	rabbitmq.SetGroupVersionKind(schema.GroupVersionKind{Group: "rabbitmq.com", Version: "v1beta1", Kind: "RabbitmqCluster"})
-
-	secret := &corev1.Secret{}
-
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&operatorv1beta1.OpenStack{}).
-		Watches(rabbitmq, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
-			// Trigger for any OpenStack resource when RabbitMQ changes
-			list := &operatorv1beta1.OpenStackList{}
-			mgr.GetClient().List(ctx, list)
-			reqs := make([]ctrl.Request, len(list.Items))
-			for i, os := range list.Items {
-				reqs[i] = ctrl.Request{NamespacedName: client.ObjectKey{Name: os.Name, Namespace: os.Namespace}}
-			}
-			return reqs
-		})).
-		Watches(secret, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
 			// Only watch messaging-topology-ca-bundle secrets
 			if obj.GetName() != "messaging-topology-ca-bundle" {
 				return nil
@@ -257,6 +244,27 @@ func (r *MessagingTopologyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				reqs[i] = ctrl.Request{NamespacedName: client.ObjectKey{Name: os.Name, Namespace: os.Namespace}}
 			}
 			return reqs
-		})).
-		Complete(r)
+		}))
+
+	// Try to watch RabbitmqCluster, but fail gracefully if CRDs don't exist
+	rabbitmq := &uns.Unstructured{}
+	rabbitmq.SetGroupVersionKind(schema.GroupVersionKind{Group: "rabbitmq.com", Version: "v1beta1", Kind: "RabbitmqCluster"})
+
+	err := builder.Watches(rabbitmq, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []ctrl.Request {
+		// Trigger for any OpenStack resource when RabbitMQ changes
+		list := &operatorv1beta1.OpenStackList{}
+		mgr.GetClient().List(ctx, list)
+		reqs := make([]ctrl.Request, len(list.Items))
+		for i, os := range list.Items {
+			reqs[i] = ctrl.Request{NamespacedName: client.ObjectKey{Name: os.Name, Namespace: os.Namespace}}
+		}
+		return reqs
+	})).Complete(r)
+
+	// If RabbitmqCluster CRD doesn't exist, just proceed without the watch
+	if err != nil && strings.Contains(err.Error(), "no matches for kind \"RabbitmqCluster\"") {
+		return builder.Complete(r)
+	}
+
+	return err
 }
