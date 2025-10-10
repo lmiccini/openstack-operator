@@ -571,6 +571,8 @@ func OVNNorthImageMatch(ctx context.Context, controlPlane *corev1beta1.OpenStack
 func EnsureOVNMetricsCert(ctx context.Context, instance *corev1beta1.OpenStackControlPlane, helper *helper.Helper) error {
 	Log := GetLogger(ctx)
 
+	Log.Info("Ensuring OVN metrics certificate", "Instance.Namespace", instance.Namespace, "Instance.Name", instance.Name)
+
 	dnsSuffix := clusterdns.GetDNSClusterDomain()
 
 	certRequest := certmanager.CertificateRequest{
@@ -609,7 +611,7 @@ func EnsureOVNMetricsCert(ctx context.Context, instance *corev1beta1.OpenStackCo
 		return err
 	} else if (ctrlResult != ctrl.Result{}) {
 		Log.Info("OVN metrics certificate creation in progress", "certificate", certRequest.CertName)
-		return fmt.Errorf("OVN metrics certificate creation in progress")
+		return nil
 	}
 
 	Log.Info("OVN metrics certificate ensured", "secret", certSecret.Name, "certificate", certRequest.CertName)
