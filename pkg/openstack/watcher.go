@@ -162,6 +162,9 @@ func ReconcileWatcher(ctx context.Context, instance *corev1beta1.OpenStackContro
 		instance.Status.ContainerImages.WatcherApplierImage = version.Status.ContainerImages.WatcherApplierImage
 		instance.Status.ContainerImages.WatcherDecisionEngineImage = version.Status.ContainerImages.WatcherApplierImage
 		instance.Status.Conditions.MarkTrue(corev1beta1.OpenStackControlPlaneWatcherReadyCondition, corev1beta1.OpenStackControlPlaneWatcherReadyMessage)
+	} else if !instance.Spec.Watcher.Enabled {
+		// If watcher is disabled, remove the condition entirely to prevent it from appearing in status
+		instance.Status.Conditions.Remove(corev1beta1.OpenStackControlPlaneWatcherReadyCondition)
 	} else {
 		// We want to mirror the condition of the highest priority from the Watcher resource into the instance
 		// under the condition of type OpenStackControlPlaneWatcherReadyCondition, but only if the sub-resource
