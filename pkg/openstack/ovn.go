@@ -37,13 +37,9 @@ func ReconcileOVN(ctx context.Context, instance *corev1beta1.OpenStackControlPla
 		instance.Spec.Ovn.Template = &corev1beta1.OvnResources{}
 	}
 
-	// Create TLS certificate for OVN metrics services when TLS is enabled
-	if instance.Spec.Ovn.Enabled && instance.Spec.TLS.PodLevel.Enabled {
-		if err := EnsureOVNMetricsCert(ctx, instance, helper); err != nil {
-			Log.Error(err, "Failed to ensure OVN metrics certificate")
-			setOVNReadyError(instance, err)
-			return ctrl.Result{}, err
-		}
+	// Ensure OVN metrics certificate when TLS is enabled
+	if err := ensureOVNMetricsCertIfNeeded(ctx, instance, helper, setOVNReadyError); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	OVNDBClustersReady, OVNDBClustersConditions, err := ReconcileOVNDbClusters(ctx, instance, version, helper)
@@ -390,6 +386,20 @@ func ReconcileOVNController(ctx context.Context, instance *corev1beta1.OpenStack
 	Log := GetLogger(ctx)
 	conditions := condition.Conditions{}
 
+	setOVNReadyError := func(instance *corev1beta1.OpenStackControlPlane, err error) {
+		instance.Status.Conditions.Set(condition.FalseCondition(
+			corev1beta1.OpenStackControlPlaneOVNReadyCondition,
+			condition.ErrorReason,
+			condition.SeverityWarning,
+			corev1beta1.OpenStackControlPlaneOVNReadyErrorMessage,
+			err.Error()))
+	}
+
+	// Ensure OVN metrics certificate when TLS is enabled
+	if err := ensureOVNMetricsCertIfNeeded(ctx, instance, helper, setOVNReadyError); err != nil {
+		return false, conditions, err
+	}
+
 	OVNController := &ovnv1.OVNController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ovncontroller",
@@ -565,6 +575,22 @@ func OVNNorthImageMatch(ctx context.Context, controlPlane *corev1beta1.OpenStack
 		}
 	}
 	return true
+}
+
+// ensureOVNMetricsCertIfNeeded creates TLS certificate for OVN metrics services when TLS is enabled
+func ensureOVNMetricsCertIfNeeded(ctx context.Context, instance *corev1beta1.OpenStackControlPlane, helper *helper.Helper, setOVNReadyError func(*corev1beta1.OpenStackControlPlane, error)) error {
+	Log := GetLogger(ctx)
+
+	// Create TLS certificate for OVN metrics services when TLS is enabled
+	if instance.Spec.Ovn.Enabled && instance.Spec.TLS.PodLevel.Enabled {
+		if err := EnsureOVNMetricsCert(ctx, instance, helper); err != nil {
+			Log.Error(err, "Failed to ensure OVN metrics certificate")
+			setOVNReadyError(instance, err)
+			return err
+		}
+	}
+
+	return nil
 }
 
 // EnsureOVNMetricsCert creates TLS certificate for OVN metrics services
