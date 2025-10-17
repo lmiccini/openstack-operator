@@ -1231,6 +1231,177 @@ var _ = Describe("OpenStackOperator controller", func() {
 				}, timeout, interval).Should(Succeed())
 			})
 		})
+		It("should trigger RabbitMQ major update workflow when major versions differ", Serial, func() {
+			// Create a running RabbitMQ pod with "old" version
+			oldRabbitMQImage := "quay.io/podified-antelope-centos9/openstack-rabbitmq:3.9.0"  // Major version 3.9
+			newRabbitMQImage := "quay.io/podified-antelope-centos9/openstack-rabbitmq:3.12.0" // Major version 3.12
+
+			// Create the mock RabbitMQ pod that represents the currently running instance
+			rabbitMQPod := &k8s_corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "rabbitmq-server-0",
+					Namespace: names.Namespace,
+				},
+				Spec: k8s_corev1.PodSpec{
+					Containers: []k8s_corev1.Container{
+						{
+							Name:  "rabbitmq",
+							Image: oldRabbitMQImage,
+						},
+					},
+				},
+				Status: k8s_corev1.PodStatus{
+					Phase: k8s_corev1.PodRunning,
+				},
+			}
+
+			Expect(k8sClient.Create(ctx, rabbitMQPod)).Should(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, rabbitMQPod)
+
+			// Get the OpenStackVersion and update it with the new RabbitMQ image
+			osversion := GetOpenStackVersion(names.OpenStackVersionName)
+			osversion.Status.ContainerImages.RabbitmqImage = &newRabbitMQImage
+			Expect(k8sClient.Status().Update(ctx, osversion)).Should(Succeed())
+
+			// Trigger the minor update by changing target version
+			osversion.Spec.TargetVersion = updatedVersion
+			Expect(k8sClient.Update(ctx, osversion)).Should(Succeed())
+
+			// Wait for the minor update to start and reach RabbitMQ processing
+			Eventually(func(g Gomega) {
+				osversion := GetOpenStackVersion(names.OpenStackVersionName)
+				g.Expect(osversion).Should(Not(BeNil()))
+
+				// Should reach OVN dataplane completion first
+				th.ExpectCondition(
+					names.OpenStackVersionName,
+					ConditionGetterFunc(OpenStackVersionConditionGetter),
+					corev1.OpenStackVersionMinorUpdateOVNDataplane,
+					k8s_corev1.ConditionTrue,
+				)
+			}, timeout, interval).Should(Succeed())
+
+			// Verify that version check pod gets created
+			Eventually(func(g Gomega) {
+				versionCheckPod := &k8s_corev1.Pod{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "rabbitmq-version-check",
+					Namespace: names.Namespace,
+				}, versionCheckPod)
+
+				g.Expect(err).Should(Succeed())
+				g.Expect(versionCheckPod.Spec.Containers[0].Image).Should(Equal(newRabbitMQImage))
+				g.Expect(versionCheckPod.Spec.RestartPolicy).Should(Equal(k8s_corev1.RestartPolicyNever))
+			}, timeout, interval).Should(Succeed())
+
+			// Clean up the version check pod to simulate completion
+			versionCheckPod := &k8s_corev1.Pod{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "rabbitmq-version-check",
+					Namespace: names.Namespace,
+				}, versionCheckPod)
+			}, timeout, interval).Should(Succeed())
+
+			Expect(k8sClient.Delete(ctx, versionCheckPod)).Should(Succeed())
+
+			// Verify RabbitMQ major update condition is set
+			Eventually(func(g Gomega) {
+				th.ExpectCondition(
+					names.OpenStackVersionName,
+					ConditionGetterFunc(OpenStackVersionConditionGetter),
+					corev1.OpenStackVersionMajorUpdateRabbitMQ,
+					k8s_corev1.ConditionFalse, // Should be False initially while deletion is in progress
+				)
+			}, timeout, interval).Should(Succeed())
+
+			// Simulate RabbitMQ cluster deletion and recreation with new version
+			Expect(k8sClient.Delete(ctx, rabbitMQPod)).Should(Succeed())
+
+			// Create new RabbitMQ pod with new version
+			newRabbitMQPod := &k8s_corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "rabbitmq-server-0",
+					Namespace: names.Namespace,
+				},
+				Spec: k8s_corev1.PodSpec{
+					Containers: []k8s_corev1.Container{
+						{
+							Name:  "rabbitmq",
+							Image: newRabbitMQImage,
+						},
+					},
+				},
+				Status: k8s_corev1.PodStatus{
+					Phase: k8s_corev1.PodRunning,
+				},
+			}
+			Expect(k8sClient.Create(ctx, newRabbitMQPod)).Should(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, newRabbitMQPod)
+
+			// Simulate RabbitMQ reconciliation success
+			SimulateRabbitmqReady()
+
+			// Verify RabbitMQ major update progresses to dataplane phase
+			Eventually(func(g Gomega) {
+				th.ExpectCondition(
+					names.OpenStackVersionName,
+					ConditionGetterFunc(OpenStackVersionConditionGetter),
+					corev1.OpenStackVersionMajorUpdateRabbitMQ,
+					k8s_corev1.ConditionTrue,
+				)
+			}, timeout, interval).Should(Succeed())
+
+			// Check that dataplane deployment gets created with nova service override
+			Eventually(func(g Gomega) {
+				deploymentName := fmt.Sprintf("rabbitmq-major-update-%s", updatedVersion)
+				deployment := &dataplanev1.OpenStackDataPlaneDeployment{}
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: names.Namespace,
+				}, deployment)
+
+				g.Expect(err).Should(Succeed())
+				g.Expect(deployment.Spec.ServicesOverride).Should(ContainElement("nova"))
+			}, timeout, interval).Should(Succeed())
+
+			// Simulate dataplane deployment completion
+			deploymentName := fmt.Sprintf("rabbitmq-major-update-%s", updatedVersion)
+			deployment := &dataplanev1.OpenStackDataPlaneDeployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name:      deploymentName,
+					Namespace: names.Namespace,
+				}, deployment)
+			}, timeout, interval).Should(Succeed())
+
+			// Mark deployment as ready
+			deployment.Status.Conditions = condition.Conditions{}
+			deployment.Status.Conditions.MarkTrue(condition.ReadyCondition, "Setup Complete")
+			deployment.Status.ObservedGeneration = deployment.Generation
+			Expect(k8sClient.Status().Update(ctx, deployment)).Should(Succeed())
+
+			// Verify RabbitMQ major update dataplane condition becomes true
+			Eventually(func(g Gomega) {
+				th.ExpectCondition(
+					names.OpenStackVersionName,
+					ConditionGetterFunc(OpenStackVersionConditionGetter),
+					corev1.OpenStackVersionMajorUpdateRabbitMQDataplane,
+					k8s_corev1.ConditionTrue,
+				)
+			}, timeout, interval).Should(Succeed())
+
+			// Verify regular RabbitMQ minor update condition is also set
+			Eventually(func(g Gomega) {
+				th.ExpectCondition(
+					names.OpenStackVersionName,
+					ConditionGetterFunc(OpenStackVersionConditionGetter),
+					corev1.OpenStackVersionMinorUpdateRabbitMQ,
+					k8s_corev1.ConditionTrue,
+				)
+			}, timeout, interval).Should(Succeed())
+		})
+
 	})
 
 })
