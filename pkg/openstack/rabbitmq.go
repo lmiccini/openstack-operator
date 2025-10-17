@@ -436,7 +436,10 @@ func extractMajorVersion(rpmVersion string) (int, error) {
 func CheckRabbitMQMajorVersionChange(ctx context.Context, helper *helper.Helper, instance *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) (bool, error) {
 	log := GetLogger(ctx)
 
+	log.Info("Checking RabbitMQ major version change", "enabled", instance.Spec.Rabbitmq.Enabled)
+
 	if !instance.Spec.Rabbitmq.Enabled {
+		log.Info("RabbitMQ not enabled, skipping major version check")
 		return false, nil
 	}
 
@@ -447,19 +450,25 @@ func CheckRabbitMQMajorVersionChange(ctx context.Context, helper *helper.Helper,
 		break
 	}
 	if mqName == "" {
+		log.Info("No RabbitMQ templates found, skipping major version check")
 		return false, fmt.Errorf("no RabbitMQ templates found")
 	}
+
+	log.Info("Checking RabbitMQ major version change", "mqName", mqName)
 
 	// Get current RabbitMQ pod
 	rabbitPod := &corev1.Pod{}
 	podName := fmt.Sprintf("%s-server-0", mqName)
 	err := helper.GetClient().Get(ctx, types.NamespacedName{Name: podName, Namespace: instance.Namespace}, rabbitPod)
 	if k8s_errors.IsNotFound(err) {
-		log.Info("RabbitMQ pod not found, assuming fresh deployment")
+		log.Info("RabbitMQ pod not found, assuming fresh deployment", "podName", podName)
 		return false, nil
 	} else if err != nil {
+		log.Error(err, "Failed to get RabbitMQ pod", "podName", podName)
 		return false, err
 	}
+
+	log.Info("Found existing RabbitMQ pod, proceeding with version check", "podName", podName)
 
 	// Create verification pod from new image
 	verifyPod := &corev1.Pod{

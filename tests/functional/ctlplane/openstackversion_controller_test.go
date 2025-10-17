@@ -18,6 +18,7 @@ package functional_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -32,6 +33,7 @@ import (
 	dataplanev1 "github.com/openstack-k8s-operators/openstack-operator/apis/dataplane/v1beta1"
 	k8s_corev1 "k8s.io/api/core/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
