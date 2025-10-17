@@ -432,8 +432,34 @@ func extractMajorVersion(rpmVersion string) (int, error) {
 	return major, nil
 }
 
+// RabbitMQVersionChecker interface for checking RabbitMQ major version changes
+type RabbitMQVersionChecker interface {
+	CheckMajorVersionChange(ctx context.Context, helper *helper.Helper, instance *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) (bool, error)
+}
+
+// DefaultRabbitMQVersionChecker implements RabbitMQVersionChecker with real pod execution
+type DefaultRabbitMQVersionChecker struct{}
+
+// CheckMajorVersionChange checks if RabbitMQ requires major version update using real pods
+func (c *DefaultRabbitMQVersionChecker) CheckMajorVersionChange(ctx context.Context, helper *helper.Helper, instance *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) (bool, error) {
+	return checkRabbitMQMajorVersionChangeImpl(ctx, helper, instance, version)
+}
+
+// Global variable to allow test injection
+var rabbitMQVersionChecker RabbitMQVersionChecker = &DefaultRabbitMQVersionChecker{}
+
+// SetRabbitMQVersionChecker allows tests to inject a mock version checker
+func SetRabbitMQVersionChecker(checker RabbitMQVersionChecker) {
+	rabbitMQVersionChecker = checker
+}
+
 // CheckRabbitMQMajorVersionChange checks if RabbitMQ requires major version update
 func CheckRabbitMQMajorVersionChange(ctx context.Context, helper *helper.Helper, instance *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) (bool, error) {
+	return rabbitMQVersionChecker.CheckMajorVersionChange(ctx, helper, instance, version)
+}
+
+// checkRabbitMQMajorVersionChangeImpl contains the actual implementation
+func checkRabbitMQMajorVersionChangeImpl(ctx context.Context, helper *helper.Helper, instance *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) (bool, error) {
 	log := GetLogger(ctx)
 
 	log.Info("Checking RabbitMQ major version change", "enabled", instance.Spec.Rabbitmq.Enabled)
