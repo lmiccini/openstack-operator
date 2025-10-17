@@ -295,7 +295,8 @@ func (r *OpenStackVersionReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		needsMajorUpdate, err := openstack.CheckRabbitMQMajorVersionChange(ctx, versionHelper, controlPlane, instance)
 		if err != nil {
 			Log.Error(err, "Failed to check RabbitMQ major version change")
-			return ctrl.Result{}, err
+			// Don't proceed with update if version check fails
+			return ctrl.Result{}, nil
 		}
 		Log.Info("RabbitMQ major version check result", "needsMajorUpdate", needsMajorUpdate)
 
