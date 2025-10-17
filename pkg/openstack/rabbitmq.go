@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	certmgrv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
@@ -432,6 +433,42 @@ func extractMajorVersion(rpmVersion string) (int, error) {
 	return major, nil
 }
 
+// waitForPodReady waits for a pod to be ready with a timeout
+func waitForPodReady(ctx context.Context, helper *helper.Helper, podName, namespace string) error {
+	log := GetLogger(ctx)
+
+	timeout := 60 * time.Second
+	interval := 2 * time.Second
+
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		pod := &corev1.Pod{}
+		err := helper.GetClient().Get(ctx, types.NamespacedName{Name: podName, Namespace: namespace}, pod)
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				log.Info("Pod not found yet, waiting", "podName", podName)
+				time.Sleep(interval)
+				continue
+			}
+			return err
+		}
+
+		// Check if pod is ready
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				log.Info("Pod is ready", "podName", podName)
+				return nil
+			}
+		}
+
+		log.Info("Pod not ready yet, waiting", "podName", podName, "phase", pod.Status.Phase)
+		time.Sleep(interval)
+	}
+
+	return fmt.Errorf("timeout waiting for pod %s/%s to be ready", namespace, podName)
+}
+
 // RabbitMQVersionChecker interface for checking RabbitMQ major version changes
 type RabbitMQVersionChecker interface {
 	CheckMajorVersionChange(ctx context.Context, helper *helper.Helper, instance *corev1beta1.OpenStackControlPlane, version *corev1beta1.OpenStackVersion) (bool, error)
@@ -520,7 +557,13 @@ func checkRabbitMQMajorVersionChangeImpl(ctx context.Context, helper *helper.Hel
 		return false, err
 	}
 
-	// Wait for pod to be ready (simplified - real implementation should wait properly)
+	// Wait for pod to be ready
+	err = waitForPodReady(ctx, helper, verifyPod.Name, instance.Namespace)
+	if err != nil {
+		// Clean up verification pod
+		helper.GetClient().Delete(ctx, verifyPod)
+		return false, fmt.Errorf("verification pod not ready: %w", err)
+	}
 
 	// Get versions from both pods
 	currentVersion, err := getRabbitMQVersionFromPod(ctx, helper, podName, instance.Namespace)
