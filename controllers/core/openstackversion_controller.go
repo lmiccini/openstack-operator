@@ -290,17 +290,88 @@ func (r *OpenStackVersionReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			corev1beta1.OpenStackVersionMinorUpdateOVNDataplane,
 			corev1beta1.OpenStackVersionMinorUpdateReadyMessage)
 
-		// minor update for RabbitMQ
-		if !openstack.RabbitmqImageMatch(ctx, controlPlane, instance) ||
-			!controlPlane.Status.Conditions.IsTrue(corev1beta1.OpenStackControlPlaneRabbitMQReadyCondition) {
-			instance.Status.Conditions.Set(condition.FalseCondition(
-				corev1beta1.OpenStackVersionMinorUpdateRabbitMQ,
-				condition.RequestedReason,
-				condition.SeverityInfo,
-				corev1beta1.OpenStackVersionMinorUpdateReadyRunningMessage))
-			Log.Info("Minor update for RabbitMQ in progress")
-			return ctrl.Result{}, nil
+		// Check for RabbitMQ major version change first
+		needsMajorUpdate, err := openstack.CheckRabbitMQMajorVersionChange(ctx, versionHelper, controlPlane, instance)
+		if err != nil {
+			Log.Error(err, "Failed to check RabbitMQ major version change")
+			return ctrl.Result{}, err
 		}
+
+		if needsMajorUpdate {
+			// Handle RabbitMQ major update
+			if !instance.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMajorUpdateRabbitMQ) {
+				Log.Info("Starting RabbitMQ major update - deleting cluster and PVCs")
+				err := openstack.DeleteRabbitMQClusterAndPVCs(ctx, versionHelper, controlPlane)
+				if err != nil {
+					Log.Error(err, "Failed to delete RabbitMQ cluster and PVCs")
+					return ctrl.Result{}, err
+				}
+
+				instance.Status.Conditions.Set(condition.FalseCondition(
+					corev1beta1.OpenStackVersionMajorUpdateRabbitMQ,
+					condition.RequestedReason,
+					condition.SeverityInfo,
+					corev1beta1.OpenStackVersionMinorUpdateReadyRunningMessage))
+				return ctrl.Result{}, nil
+			}
+
+			// Check if new RabbitMQ cluster is ready
+			if !openstack.RabbitmqImageMatch(ctx, controlPlane, instance) ||
+				!controlPlane.Status.Conditions.IsTrue(corev1beta1.OpenStackControlPlaneRabbitMQReadyCondition) {
+				Log.Info("Waiting for new RabbitMQ cluster to be ready")
+				return ctrl.Result{}, nil
+			}
+
+			instance.Status.Conditions.MarkTrue(
+				corev1beta1.OpenStackVersionMajorUpdateRabbitMQ,
+				corev1beta1.OpenStackVersionMinorUpdateReadyMessage)
+
+			// Create dataplane deployment for nova
+			if !instance.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMajorUpdateRabbitMQDataplane) {
+				Log.Info("Creating dataplane deployment for RabbitMQ major update")
+				err := openstack.CreateDataplaneDeploymentForNova(ctx, versionHelper, controlPlane, instance)
+				if err != nil {
+					Log.Error(err, "Failed to create dataplane deployment for nova")
+					return ctrl.Result{}, err
+				}
+
+				instance.Status.Conditions.Set(condition.FalseCondition(
+					corev1beta1.OpenStackVersionMajorUpdateRabbitMQDataplane,
+					condition.RequestedReason,
+					condition.SeverityInfo,
+					corev1beta1.OpenStackVersionMinorUpdateReadyRunningMessage))
+				return ctrl.Result{}, nil
+			}
+
+			// Check if dataplane deployment is complete
+			deploymentComplete, err := openstack.CheckDataplaneDeploymentComplete(ctx, versionHelper, controlPlane, instance)
+			if err != nil {
+				Log.Error(err, "Failed to check dataplane deployment status")
+				return ctrl.Result{}, err
+			}
+
+			if !deploymentComplete {
+				Log.Info("Waiting for RabbitMQ major update dataplane deployment to complete")
+				return ctrl.Result{}, nil
+			}
+
+			instance.Status.Conditions.MarkTrue(
+				corev1beta1.OpenStackVersionMajorUpdateRabbitMQDataplane,
+				corev1beta1.OpenStackVersionMinorUpdateReadyMessage)
+		} else {
+			// Standard minor update for RabbitMQ
+			if !openstack.RabbitmqImageMatch(ctx, controlPlane, instance) ||
+				!controlPlane.Status.Conditions.IsTrue(corev1beta1.OpenStackControlPlaneRabbitMQReadyCondition) {
+				instance.Status.Conditions.Set(condition.FalseCondition(
+					corev1beta1.OpenStackVersionMinorUpdateRabbitMQ,
+					condition.RequestedReason,
+					condition.SeverityInfo,
+					corev1beta1.OpenStackVersionMinorUpdateReadyRunningMessage))
+				Log.Info("Minor update for RabbitMQ in progress")
+				return ctrl.Result{}, nil
+			}
+		}
+
 		instance.Status.Conditions.MarkTrue(
 			corev1beta1.OpenStackVersionMinorUpdateRabbitMQ,
 			corev1beta1.OpenStackVersionMinorUpdateReadyMessage)

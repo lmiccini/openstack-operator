@@ -516,6 +516,10 @@ const (
 
 	OpenStackVersionMinorUpdateRabbitMQ condition.Type = "MinorUpdateRabbitMQ"
 
+	OpenStackVersionMajorUpdateRabbitMQ condition.Type = "MajorUpdateRabbitMQ"
+
+	OpenStackVersionMajorUpdateRabbitMQDataplane condition.Type = "MajorUpdateRabbitMQDataplane"
+
 	OpenStackVersionMinorUpdateMariaDB condition.Type = "MinorUpdateMariaDB"
 
 	OpenStackVersionMinorUpdateMemcached condition.Type = "MinorUpdateMemcached"
