@@ -82,7 +82,8 @@ func (r *OpenStackVersionReconciler) GetLogger(ctx context.Context) logr.Logger 
 // +kubebuilder:rbac:groups=core.openstack.org,resources=openstackversions/finalizers,verbs=update;patch
 // +kubebuilder:rbac:groups=core.openstack.org,resources=openstackcontrolplanes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=dataplane.openstack.org,resources=openstackdataplanenodesets,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=pods;pods/exec,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=pods;pods/exec,verbs=get;list;watch;create;delete;patch;update
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=list;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
