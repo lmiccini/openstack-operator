@@ -197,6 +197,14 @@ func reconcileRabbitMQ(
 		return mqReady, ctrl.Result{}, nil
 	}
 
+	// Check if RabbitMQ major update is in progress - if so, skip reconciliation
+	if version != nil && version.Status.DeployedVersion != nil &&
+		version.Spec.TargetVersion != *version.Status.DeployedVersion &&
+		!version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMajorUpdateRabbitMQ) {
+		log.Info("RabbitMQ major update in progress, skipping reconciliation", "targetVersion", version.Spec.TargetVersion, "deployedVersion", *version.Status.DeployedVersion)
+		return mqCreating, ctrl.Result{}, nil
+	}
+
 	clusterDomain := clusterdns.GetDNSClusterDomain()
 	hostname := fmt.Sprintf("%s.%s.svc", name, instance.Namespace)
 	hostnameHeadless := fmt.Sprintf("%s-nodes.%s.svc", name, instance.Namespace)
