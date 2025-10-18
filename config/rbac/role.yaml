@@ -9,7 +9,6 @@ rules:
   resources:
   - configmaps
   - pods
-  - pods/exec
   - secrets
   - services
   verbs:
@@ -40,6 +39,16 @@ rules:
   - projects
   verbs:
   - get
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
 - apiGroups:
   - ""
   resources:
