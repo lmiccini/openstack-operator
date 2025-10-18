@@ -297,16 +297,22 @@ func (r *OpenStackControlPlaneReconciler) Reconcile(ctx context.Context, req ctr
 		if version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMinorUpdateOVNDataplane) {
 			Log.Info("Minor update in progress")
 
-			// RabbitMQ
-			ctrlResult, err := openstack.ReconcileRabbitMQs(ctx, instance, version, helper)
-			if err != nil {
-				return ctrl.Result{}, err
-			} else if (ctrlResult != ctrl.Result{}) {
-				return ctrlResult, nil
-			} else {
-				if !version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMinorUpdateRabbitMQ) {
-					Log.Info("Returning for RabbitMQ minor update reconcile")
+			// RabbitMQ - reconcile during both minor and major updates
+			shouldReconcileRabbitMQ := version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMinorUpdateRabbitMQ) ||
+				!version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMajorUpdateRabbitMQ)
+
+			if shouldReconcileRabbitMQ {
+				ctrlResult, err := openstack.ReconcileRabbitMQs(ctx, instance, version, helper)
+				if err != nil {
+					return ctrl.Result{}, err
+				} else if (ctrlResult != ctrl.Result{}) {
 					return ctrlResult, nil
+				} else {
+					if !version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMinorUpdateRabbitMQ) &&
+						version.Status.Conditions.IsTrue(corev1beta1.OpenStackVersionMajorUpdateRabbitMQ) {
+						Log.Info("Returning for RabbitMQ minor update reconcile")
+						return ctrlResult, nil
+					}
 				}
 			}
 
