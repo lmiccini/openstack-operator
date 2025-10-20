@@ -1075,8 +1075,8 @@ func (r *OpenStackControlPlane) DefaultServices() {
 		}
 
 		for key, template := range *r.Spec.Rabbitmq.Templates {
-			// Enforce queueType=Quorum for all new resources, preserve existing resources unchanged
-			if r.ObjectMeta.CreationTimestamp.IsZero() {
+			// Enforce queueType=Quorum for all new resources, unless explicitly set to Mirrored
+			if r.ObjectMeta.CreationTimestamp.IsZero() && template.QueueType != "Mirrored" {
 				template.QueueType = "Quorum"
 			}
 			// By-value copy, need to update
@@ -1180,7 +1180,7 @@ func (r *OpenStackControlPlane) ValidateNotificationsBusInstance(basePath *field
 	// NotificationsBusInstance is set and must be equal to an existing
 	// deployed rabbitmq instance, otherwise we should fail because it
 	// does not represent a valid string
-	for k := range(*r.Spec.Rabbitmq.Templates) {
+	for k := range *r.Spec.Rabbitmq.Templates {
 		if *r.Spec.NotificationsBusInstance == k {
 			return nil
 		}

@@ -3193,6 +3193,42 @@ var _ = Describe("OpenStackOperator Webhook", func() {
 		}).Should(Succeed())
 	})
 
+	It("Preserves explicit queueType=Mirrored for new resources", func() {
+		spec := GetDefaultOpenStackControlPlaneSpec()
+		spec["tls"] = GetTLSPublicSpec()
+
+		// Explicitly set queueType to Mirrored for one template
+		spec["rabbitmq"] = map[string]interface{}{
+			"enabled": true,
+			"templates": map[string]interface{}{
+				"rabbitmq": map[string]interface{}{
+					"replicas":  1,
+					"queueType": "Mirrored",
+				},
+				"rabbitmq-cell1": map[string]interface{}{
+					"replicas": 1,
+					// No queueType specified - should default to Quorum
+				},
+			},
+		}
+
+		DeferCleanup(
+			th.DeleteInstance,
+			CreateOpenStackControlPlane(types.NamespacedName{Name: "test-explicit-mirrored", Namespace: namespace}, spec),
+		)
+
+		OSCtlplane := GetOpenStackControlPlane(types.NamespacedName{Name: "test-explicit-mirrored", Namespace: namespace})
+		Expect(OSCtlplane.Spec.Rabbitmq.Templates).Should(Not(BeNil()))
+
+		// Verify that explicitly set Mirrored is preserved
+		rabbitTemplate := (*OSCtlplane.Spec.Rabbitmq.Templates)["rabbitmq"]
+		Expect(rabbitTemplate.QueueType).Should(Equal("Mirrored"), "Explicitly set queueType=Mirrored should be preserved")
+
+		// Verify that unset queueType defaults to Quorum
+		rabbitCell1Template := (*OSCtlplane.Spec.Rabbitmq.Templates)["rabbitmq-cell1"]
+		Expect(rabbitCell1Template.QueueType).Should(Equal("Quorum"), "Unset queueType should default to Quorum")
+	})
+
 	It("calls placement validation webhook", func() {
 		spec := GetDefaultOpenStackControlPlaneSpec()
 		spec["tls"] = GetTLSPublicSpec()
