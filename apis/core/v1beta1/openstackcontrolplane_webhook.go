@@ -1075,8 +1075,8 @@ func (r *OpenStackControlPlane) DefaultServices() {
 		}
 
 		for key, template := range *r.Spec.Rabbitmq.Templates {
-			// Enforce queueType=Quorum for all new resources, unless explicitly set to Mirrored
-			if r.ObjectMeta.CreationTimestamp.IsZero() && template.QueueType != "Mirrored" {
+			// Default queueType=Quorum for new resources when not explicitly set
+			if r.ObjectMeta.CreationTimestamp.IsZero() && template.QueueType == "" {
 				template.QueueType = "Quorum"
 			}
 			// By-value copy, need to update

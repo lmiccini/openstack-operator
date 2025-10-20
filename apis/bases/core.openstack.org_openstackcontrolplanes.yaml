@@ -13262,7 +13262,6 @@ spec:
                               type: string
                           type: object
                         queueType:
-                          default: Mirrored
                           enum:
                           - None
                           - Mirrored
