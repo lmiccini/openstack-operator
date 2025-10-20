@@ -1075,8 +1075,12 @@ func (r *OpenStackControlPlane) DefaultServices() {
 		}
 
 		for key, template := range *r.Spec.Rabbitmq.Templates {
-			// Default queueType=Quorum for new resources when not explicitly set
-			if r.ObjectMeta.CreationTimestamp.IsZero() && template.QueueType == "" {
+			// Check if user explicitly set queueType before calling Default()
+			userSetQueueType := template.QueueType != ""
+			// Call Default() to apply standard defaults
+			template.Default()
+			// Override queueType=Quorum for new resources when not explicitly set by user
+			if r.ObjectMeta.CreationTimestamp.IsZero() && !userSetQueueType {
 				template.QueueType = "Quorum"
 			}
 			// By-value copy, need to update

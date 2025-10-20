@@ -1401,7 +1401,6 @@ spec:
                     type: string
                 type: object
               queueType:
-                default: Mirrored
                 description: QueueType to eventually apply the ha-all policy or configure
                   default queue type for the cluster
                 enum:
