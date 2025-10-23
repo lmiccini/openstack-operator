@@ -246,6 +246,8 @@ spec:
                   properties:
                     glanceWsgi:
                       type: string
+                    rabbitmqVersion:
+                      type: string
                   type: object
                 type: object
               availableVersion:
@@ -672,6 +674,8 @@ spec:
               serviceDefaults:
                 properties:
                   glanceWsgi:
+                    type: string
+                  rabbitmqVersion:
                     type: string
                 type: object
               trackedCustomImages:

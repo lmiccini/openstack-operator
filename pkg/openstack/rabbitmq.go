@@ -40,6 +40,9 @@ const (
 	mqFailed   mqStatus = iota
 	mqCreating mqStatus = iota
 	mqReady    mqStatus = iota
+
+	// RabbitmqVersionLabel - label to store the rabbitmq server version
+	RabbitmqVersionLabel = "rabbitmqversion"
 )
 
 func deleteUndefinedRabbitMQs(
@@ -277,6 +280,17 @@ func reconcileRabbitMQ(
 			rabbitmq.Spec.TLS.CaSecretName = tlsCert
 			rabbitmq.Spec.TLS.DisableNonTLSListeners = true
 		}
+
+		// add label to store the rabbitmq-server version
+		if rabbitmq.GetLabels() == nil {
+			rabbitmq.SetLabels(make(map[string]string))
+		}
+		if version.Status.ServiceDefaults.RabbitmqVersion != nil {
+			rabbitmq.GetLabels()[RabbitmqVersionLabel] = *version.Status.ServiceDefaults.RabbitmqVersion
+		} else {
+			rabbitmq.GetLabels()[RabbitmqVersionLabel] = "3.9"
+		}
+
 		rabbitmq.Spec.ContainerImage = *version.Status.ContainerImages.RabbitmqImage
 		err := controllerutil.SetControllerReference(helper.GetBeforeObject(), rabbitmq, helper.GetScheme())
 		if err != nil {
