@@ -1,0 +1,332 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/component: webhook
+    app.kubernetes.io/created-by: openstack-operator
+    app.kubernetes.io/instance: webhook-service
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: service
+    app.kubernetes.io/part-of: messaging-topology-operator
+  name: messaging-topology-operator-webhook-service
+  namespace: '{{ .OperatorNamespace }}'
+spec:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 9443
+  selector:
+    openstack.org/operator-name: messaging-topology
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    app.kubernetes.io/component: certificate
+    app.kubernetes.io/created-by: openstack-operator
+    app.kubernetes.io/instance: serving-cert
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: certificate
+    app.kubernetes.io/part-of: messaging-topology-operator
+  name: messaging-topology-operator-serving-cert
+  namespace: '{{ .OperatorNamespace }}'
+spec:
+  dnsNames:
+  - messaging-topology-operator-webhook-service.{{ .OperatorNamespace }}.svc
+  - messaging-topology-operator-webhook-service.{{ .OperatorNamespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: messaging-topology-operator-selfsigned-issuer
+  secretName: messaging-topology-operator-webhook-server-cert
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    app.kubernetes.io/component: certificate
+    app.kubernetes.io/created-by: openstack-operator
+    app.kubernetes.io/instance: selfsigned-issuer
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: issuer
+    app.kubernetes.io/part-of: messaging-topology-operator
+  name: messaging-topology-operator-selfsigned-issuer
+  namespace: '{{ .OperatorNamespace }}'
+spec:
+  selfSigned: {}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  annotations:
+    cert-manager.io/inject-ca-from: '{{ .OperatorNamespace }}/messaging-topology-operator-serving-cert'
+  creationTimestamp: null
+  labels:
+    app.kubernetes.io/component: webhook
+    app.kubernetes.io/created-by: openstack-operator
+    app.kubernetes.io/instance: validating-webhook-configuration
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: validatingwebhookconfiguration
+    app.kubernetes.io/part-of: messaging-topology-operator
+  name: messaging-topology-operator-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vbinding.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - bindings
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-binding
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vexchange.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - exchanges
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-exchange
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vfederation.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - federations
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-federation
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: voperatorpolicy.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - operatorpolicies
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-operatorpolicy
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vpermission.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - permissions
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-permission
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vpolicy.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - policies
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-policy
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vqueue.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - queues
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-queue
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vschemareplication.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - schemareplications
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-schemareplication
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vshovel.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - shovels
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-shovel
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vsuperstream.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1alpha1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - superstreams
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1alpha1-superstream
+- admissionReviewVersions:
+  - v1
+  - v1beta1
+  failurePolicy: Fail
+  name: vtopicpermission.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - topicpermissions
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-topicpermission
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vuser.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - users
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-user
+- admissionReviewVersions:
+  - v1
+  failurePolicy: Fail
+  name: vvhost.kb.io
+  rules:
+    - apiGroups:
+        - rabbitmq.com
+      apiVersions:
+      - v1beta1
+      operations:
+        - CREATE
+        - UPDATE
+      resources:
+        - vhosts
+  sideEffects: None
+  clientConfig:
+    service:
+      name: messaging-topology-operator-webhook-service
+      namespace: '{{ .OperatorNamespace }}'
+      path: /validate-rabbitmq-com-v1beta1-vhost

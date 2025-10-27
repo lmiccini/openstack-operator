@@ -37,6 +37,7 @@ const (
 	KeystoneOperatorName           = "keystone"
 	ManilaOperatorName             = "manila"
 	MariaDBOperatorName            = "mariadb"
+	MessagingTopologyOperatorName  = "messaging-topology"
 	NeutronOperatorName            = "neutron"
 	NovaOperatorName               = "nova"
 	OctaviaOperatorName            = "octavia"
@@ -151,6 +152,21 @@ var (
 			Name: MariaDBOperatorName,
 		},
 		{
+			Name: MessagingTopologyOperatorName,
+			ControllerManager: ContainerSpec{
+				Resources: corev1.ResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("5m"),
+						corev1.ResourceMemory: resource.MustParse("64Mi"),
+					},
+					Limits: corev1.ResourceList{
+						corev1.ResourceCPU:    resource.MustParse("200m"),
+						corev1.ResourceMemory: resource.MustParse("500Mi"),
+					},
+				},
+			},
+		},
+		{
 			Name: NeutronOperatorName,
 		},
 		{
@@ -211,7 +227,7 @@ type OpenStackSpec struct {
 type OperatorSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Enum:=openstack;barbican;cinder;designate;glance;heat;horizon;infra;ironic;keystone;manila;mariadb;neutron;nova;octavia;openstack-baremetal;ovn;placement;rabbitmq-cluster;swift;telemetry;test;watcher
+	// +kubebuilder:validation:Enum:=openstack;barbican;cinder;designate;glance;heat;horizon;infra;ironic;keystone;manila;mariadb;messaging-topology;neutron;nova;octavia;openstack-baremetal;ovn;placement;rabbitmq-cluster;swift;telemetry;test;watcher
 	// Name of the service operators.
 	Name string `json:"name"`
 

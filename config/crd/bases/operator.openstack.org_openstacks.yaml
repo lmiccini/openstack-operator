@@ -87,6 +87,7 @@ spec:
                       - keystone
                       - manila
                       - mariadb
+                      - messaging-topology
                       - neutron
                       - nova
                       - octavia

@@ -103,6 +103,10 @@ metadata:
   namespace: '{{ .OperatorNamespace }}'
 spec:
   selfSigned: {}
+EOF_CAT
+
+if [[ -n "$MUTATING_WEBHOOKS" ]]; then
+cat >> operator/$OPERATOR_NAME-webhooks.yaml <<EOF_CAT
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
@@ -120,6 +124,11 @@ metadata:
   name: $OPERATOR_NAME-mutating-webhook-configuration
 webhooks:
 ${MUTATING_WEBHOOKS}
+EOF_CAT
+fi
+
+if [[ -n "$VALIDATING_WEBHOOKS" ]]; then
+cat >> operator/$OPERATOR_NAME-webhooks.yaml <<EOF_CAT
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
@@ -138,6 +147,7 @@ metadata:
 webhooks:
 ${VALIDATING_WEBHOOKS}
 EOF_CAT
+fi
 
 }
 
@@ -173,7 +183,7 @@ for X in $(ls manifests/*clusterserviceversion.yaml); do
         CLUSTER_ROLE_RULES=$(cat $X | $LOCAL_BINARIES/yq -r .spec.install.spec.clusterPermissions| sed -e 's|- rules:|rules:|' | sed -e 's|    ||' | sed -e '/  serviceAccountName.*/d'
 )
 
-if [[ "$OPERATOR_NAME" == "infra-operator" || "$OPERATOR_NAME" == "openstack-baremetal-operator" ]]; then
+if [[ "$OPERATOR_NAME" == "infra-operator" || "$OPERATOR_NAME" == "openstack-baremetal-operator" || "$OPERATOR_NAME" == "messaging-topology-operator" ]]; then
     write_webhooks "$X" "$OPERATOR_NAME"
 fi
 
@@ -286,9 +296,11 @@ EOF_CAT
 for X in $(ls manifests/*clusterserviceversion.yaml); do
         OPERATOR_NAME=$(echo $X | sed -e "s|manifests\/\([^\.]*\)\..*|\1|" | sed -e "s|-|_|g" | tr '[:lower:]' '[:upper:]' )
         echo $OPERATOR_NAME
-        if [[ $OPERATOR_NAME == "RABBITMQ_CLUSTER_OPERATOR" ]]; then
-            # Rabbitmq cluster operator has just a container in the deployment and name is operator, different that openstack ones
-            IMAGE=$(cat $X | $LOCAL_BINARIES/yq -r '.spec.install.spec.deployments[0].spec.template.spec.containers.[] | select(.name == "operator") | .image')
+#        if [[ $OPERATOR_NAME == "RABBITMQ_CLUSTER_OPERATOR" ]]; then
+#            # Rabbitmq cluster operator has just a container in the deployment and name is operator, different that openstack ones
+#            IMAGE=$(cat $X | $LOCAL_BINARIES/yq -r '.spec.install.spec.deployments[0].spec.template.spec.containers.[] | select(.name == "operator") | .image')
+        if [[ $OPERATOR_NAME == "RABBITMQ_CLUSTER_OPERATOR" ]] || [[ $OPERATOR_NAME == "MESSAGING_TOPOLOGY_OPERATOR" ]]; then
+            IMAGE=$(cat $X | $LOCAL_BINARIES/yq -r .spec.install.spec.deployments[0].spec.template.spec.containers[0].image)
         else
             # The name of the actual operator container in the openstack operators is manager
             IMAGE=$(cat $X | $LOCAL_BINARIES/yq -r '.spec.install.spec.deployments[0].spec.template.spec.containers.[] | select(.name == "manager") | .image')

@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/component: messaging-topology-operator
+    app.kubernetes.io/name: messaging-topology-operator
+    app.kubernetes.io/part-of: messaging-topology
+  name: messaging-topology-operator
+  namespace: {{ .MessagingTopologyOperator.Namespace }}
+spec:
+  replicas: {{ .MessagingTopologyOperator.Deployment.Replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: messaging-topology-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: messaging-topology-operator
+        app.kubernetes.io/name: messaging-topology-operator
+        app.kubernetes.io/part-of: messaging-topology
+        openstack.org/operator-name: messaging-topology
+    spec:
+      containers:
+      - command:
+        - /manager
+        env:
+        - name: OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+{{- range .MessagingTopologyOperator.Deployment.Manager.Env }}
+        - name: '{{ .Name }}'
+          value: '{{ .Value }}'
+{{- end }}
+        image: {{ .MessagingTopologyOperator.Deployment.Manager.Image }}
+        name: manager
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        resources:
+          limits:
+            cpu: {{ .MessagingTopologyOperator.Deployment.Manager.Resources.Limits.CPU }}
+            memory: {{ .MessagingTopologyOperator.Deployment.Manager.Resources.Limits.Memory }}
+          requests:
+            cpu: {{ .MessagingTopologyOperator.Deployment.Manager.Resources.Requests.CPU }}
+            memory: {{ .MessagingTopologyOperator.Deployment.Manager.Resources.Requests.Memory }}
+        securityContext:
+          allowPrivilegeEscalation: false
+        volumeMounts:
+        - mountPath: /tmp/k8s-webhook-server/serving-certs
+          name: cert
+          readOnly: true
+        - mountPath: /etc/ssl/certs/messaging-topology-ca-bundle.crt
+          name: ca-bundle
+          readOnly: true
+          subPath: messaging-topology-ca-bundle.crt
+      securityContext:
+        runAsNonRoot: true
+      serviceAccountName: messaging-topology-operator-controller-manager
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - name: cert
+        secret:
+          defaultMode: 420
+          secretName: messaging-topology-operator-webhook-server-cert
+      - name: ca-bundle
+        secret:
+          secretName: messaging-topology-ca-bundle 

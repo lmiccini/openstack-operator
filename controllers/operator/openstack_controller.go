@@ -124,6 +124,14 @@ func SetupEnv() {
 // +kubebuilder:rbac:groups="monitoring.coreos.com",resources=servicemonitors,verbs=list;get;watch;update;create
 // +kubebuilder:rbac:groups=operators.coreos.com,resources=clusterserviceversions;subscriptions;installplans;operators,verbs=get;list;delete;
 
+// Messaging topology operator resources
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings;exchanges;federations;operatorpolicies;permissions;policies;queues;schemareplications;shovels;superstreams;topicpermissions;users;vhosts,verbs=create;delete;get;list;patch;update;watch
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings/finalizers;exchanges/finalizers;federations/finalizers;operatorpolicies/finalizers;permissions/finalizers;policies/finalizers;queues/finalizers;schemareplications/finalizers;shovels/finalizers;superstreams/finalizers;topicpermissions/finalizers;users/finalizers;vhosts/finalizers,verbs=update
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=bindings/status;exchanges/status;federations/status;operatorpolicies/status;permissions/status;policies/status;queues/status;schemareplications/status;shovels/status;superstreams/status;topicpermissions/status;users/status;vhosts/status,verbs=get;patch;update
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=rabbitmqclusters,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rabbitmq.com,resources=rabbitmqclusters/status,verbs=get
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
@@ -652,6 +660,16 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
+	// messaging-topology-operator is now handled by its own dedicated controller
+	// but we still need to provide template data for rendering
+	messagingTopologyOperator := operator.Operator{}
+	idx, op = operator.GetOperator(serviceOperators, operatorv1beta1.MessagingTopologyOperatorName)
+	if idx >= 0 {
+		messagingTopologyOperator = op
+		// remove messaging-topology-operator from serviceOperators to avoid duplicate management
+		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
+	}
+
 	data := bindata.MakeRenderData()
 
 	// global stuff
@@ -659,6 +677,9 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 
 	// rabbitmaq-cluster-operator-manager image rabbit.yaml
 	data.Data["RabbitmqOperator"] = rabbitmqOperator
+
+	// messaging-topology-operator template data (handled by dedicated controller)
+	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
 	// openstack-operator-controller-manager image operator.yaml
 	data.Data["OpenStackOperator"] = openstackOperator
@@ -696,6 +717,11 @@ func (r *OpenStackReconciler) renderAndApply(
 		// RenderDir seems to add an extra null entry to the list. It appears to be because of the
 		// nested templates. This just makes sure we don't try to apply an empty obj.
 		if obj.GetName() == "" {
+			continue
+		}
+
+		// Skip only the messaging-topology-operator deployment - handled by dedicated controller
+		if obj.GetKind() == "Deployment" && obj.GetName() == "messaging-topology-operator" {
 			continue
 		}
 		if setControllerReference {
@@ -923,7 +949,6 @@ func (r *OpenStackReconciler) postCleanupObsoleteResources(ctx context.Context, 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *OpenStackReconciler) SetupWithManager(mgr ctrl.Manager) error {
-
 	return ctrl.NewControllerManagedBy(mgr).
 		Owns(&appsv1.Deployment{}).
 		For(&operatorv1beta1.OpenStack{}).
