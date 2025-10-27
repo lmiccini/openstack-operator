@@ -156,5 +156,4 @@ replace k8s.io/component-base => k8s.io/component-base v0.31.13 //allow-merging
 
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.1.2-0.20241127223932-88edb96860cf //allow-merging
 
-replace github.com/rabbitmq/messaging-topology-operator => github.com/lmiccini/messaging-topology-operator b0b4d1ae2e82b74ee3851202b7703ff3000fe0de
-
+replace github.com/rabbitmq/messaging-topology-operator => github.com/lmiccini/messaging-topology-operator v1.17.4-0.20251027162837-b0b4d1ae2e82
