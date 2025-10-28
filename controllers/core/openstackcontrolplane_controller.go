@@ -412,8 +412,8 @@ func (r *OpenStackControlPlaneReconciler) reconcileNormal(ctx context.Context, i
 		return ctrlResult, nil
 	}
 
-	// Reconcile the messaging-topology-ca-bundle secret in openstack-operators namespace
-	// This collects all internal CA certificates from all OpenStackControlPlane instances
+	// Reconcile the messaging-topology-ca-bundle secret with updated CA certificates
+	// This updates the secret created during operator installation with actual CAs
 	err = openstack.ReconcileMessagingTopologyCABundle(ctx, helper)
 	if err != nil {
 		r.GetLogger(ctx).Error(err, "Failed to reconcile messaging-topology-ca-bundle")
