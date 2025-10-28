@@ -978,26 +978,32 @@ func getIssuerAnnotations(certConfig *corev1.CertConfig) map[string]string {
 func ReconcileMessagingTopologyCABundle(ctx context.Context, helper *helper.Helper) error {
 	log := GetLogger(ctx)
 
-	// Collect all internal CA certificates from OpenStackControlPlane instances
+	// Always create the secret, even if empty initially
 	bundle := newBundle()
+
+	// Collect all internal CA certificates from OpenStackControlPlane instances
 	ctlPlaneList := &corev1.OpenStackControlPlaneList{}
 	if err := helper.GetClient().List(ctx, ctlPlaneList); err != nil {
-		return fmt.Errorf("failed to list OpenStackControlPlane instances: %w", err)
-	}
-
-	for _, ctlPlane := range ctlPlaneList.Items {
-		if err := collectInternalCAs(ctx, helper, &ctlPlane, bundle, log); err != nil {
-			log.Error(err, "Failed to collect CAs", "namespace", ctlPlane.Namespace)
-			continue // Don't fail the entire reconciliation for one namespace
+		log.Error(err, "Failed to list OpenStackControlPlane instances, creating empty secret")
+	} else {
+		log.Info("Found OpenStackControlPlane instances", "count", len(ctlPlaneList.Items))
+		for _, ctlPlane := range ctlPlaneList.Items {
+			if err := collectInternalCAs(ctx, helper, &ctlPlane, bundle, log); err != nil {
+				log.Error(err, "Failed to collect CAs", "namespace", ctlPlane.Namespace)
+				continue // Don't fail the entire reconciliation for one namespace
+			}
 		}
 	}
 
-	// Create the messaging-topology-ca-bundle secret
+	// Generate PEM bundle (will be empty string if no certificates)
 	bundlePEM, err := bundle.getBundlePEM()
 	if err != nil {
-		return fmt.Errorf("failed to create CA bundle PEM: %w", err)
+		// If bundle creation fails, use empty content to ensure secret exists
+		log.Error(err, "Failed to create CA bundle PEM, using empty content")
+		bundlePEM = ""
 	}
 
+	// Always create/update the secret
 	secretTemplate := []util.Template{{
 		Name:         "messaging-topology-ca-bundle",
 		Namespace:    "openstack-operators",
@@ -1012,7 +1018,11 @@ func ReconcileMessagingTopologyCABundle(ctx context.Context, helper *helper.Help
 		return fmt.Errorf("failed to create messaging-topology-ca-bundle secret: %w", err)
 	}
 
-	log.Info("Updated messaging-topology-ca-bundle secret")
+	if bundlePEM == "" {
+		log.Info("Created empty messaging-topology-ca-bundle secret (no CA certificates found)")
+	} else {
+		log.Info("Updated messaging-topology-ca-bundle secret with CA certificates")
+	}
 	return nil
 }
 
