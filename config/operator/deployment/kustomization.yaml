@@ -75,3 +75,9 @@ patches:
     kind: Deployment
     name: openstack-operator-controller-operator
     namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
+    {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.1.8-1761667539"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system

@@ -22,12 +22,15 @@ import (
 	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/tls"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
+	k8s_corev1 "k8s.io/api/core/v1"
 	k8s_errors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	corev1 "github.com/openstack-k8s-operators/openstack-operator/apis/core/v1beta1"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // ReconcileCAs -
@@ -973,10 +976,16 @@ func getIssuerAnnotations(certConfig *corev1.CertConfig) map[string]string {
 	return annotations
 }
 
-// ReconcileMessagingTopologyCABundle creates a messaging-topology-ca-bundle secret in the openstack-operators namespace
+// ReconcileMessagingTopologyCABundle creates a messaging-topology-ca-bundle secret in the operator namespace
 // containing all rootca-internal certificates from all OpenStackControlPlane instances across all namespaces
 func ReconcileMessagingTopologyCABundle(ctx context.Context, helper *helper.Helper) error {
 	log := GetLogger(ctx)
+
+	// Get the operator namespace from environment variable (same as messaging-topology operator)
+	operatorNamespace := os.Getenv("OPERATOR_NAMESPACE")
+	if operatorNamespace == "" {
+		operatorNamespace = "openstack-operators" // fallback default
+	}
 
 	// Always create the secret, even if empty initially
 	bundle := newBundle()
@@ -1003,25 +1012,33 @@ func ReconcileMessagingTopologyCABundle(ctx context.Context, helper *helper.Help
 		bundlePEM = ""
 	}
 
-	// Always create/update the secret
-	secretTemplate := []util.Template{{
-		Name:         "messaging-topology-ca-bundle",
-		Namespace:    "openstack-operators",
-		Type:         util.TemplateTypeNone,
-		InstanceType: "Secret",
-		Labels:       map[string]string{"messaging-topology-ca": ""},
-		CustomData:   map[string]string{"messaging-topology-ca-bundle.crt": bundlePEM},
-		SkipSetOwner: true,
-	}}
+	// Create the secret directly using Kubernetes client
+	secretObj := &k8s_corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "messaging-topology-ca-bundle",
+			Namespace: operatorNamespace,
+			Labels:    map[string]string{"messaging-topology-ca": ""},
+		},
+		Data: map[string][]byte{
+			"messaging-topology-ca-bundle.crt": []byte(bundlePEM),
+		},
+	}
 
-	if err := secret.EnsureSecrets(ctx, helper, nil, secretTemplate, nil); err != nil {
+	// Use CreateOrUpdate to ensure the secret exists
+	_, err = controllerutil.CreateOrUpdate(ctx, helper.GetClient(), secretObj, func() error {
+		secretObj.Data = map[string][]byte{
+			"messaging-topology-ca-bundle.crt": []byte(bundlePEM),
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("failed to create messaging-topology-ca-bundle secret: %w", err)
 	}
 
 	if bundlePEM == "" {
-		log.Info("Created empty messaging-topology-ca-bundle secret (no CA certificates found)")
+		log.Info("Created empty messaging-topology-ca-bundle secret", "namespace", operatorNamespace)
 	} else {
-		log.Info("Updated messaging-topology-ca-bundle secret with CA certificates")
+		log.Info("Updated messaging-topology-ca-bundle secret with CA certificates", "namespace", operatorNamespace)
 	}
 	return nil
 }
