@@ -607,6 +607,13 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 						Name:  "ENABLE_WEBHOOKS",
 						Value: "true",
 					})
+			case operatorv1beta1.MessagingTopologyOperatorName:
+				// enable webhooks on the messaging-topology-operator
+				serviceOp.Deployment.Manager.Env = append(serviceOp.Deployment.Manager.Env,
+					corev1.EnvVar{
+						Name:  "ENABLE_WEBHOOKS",
+						Value: "true",
+					})
 			default:
 				// disable webhooks per default
 				serviceOp.Deployment.Manager.Env = append(serviceOp.Deployment.Manager.Env,
@@ -660,13 +667,12 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
-	// messaging-topology-operator is now handled by its own dedicated controller
-	// but we still need to provide template data for rendering
+	// messaging-topology-operator
 	messagingTopologyOperator := operator.Operator{}
 	idx, op = operator.GetOperator(serviceOperators, operatorv1beta1.MessagingTopologyOperatorName)
 	if idx >= 0 {
 		messagingTopologyOperator = op
-		// remove messaging-topology-operator from serviceOperators to avoid duplicate management
+		// remove messaging-topology-operator from serviceOperators
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
@@ -678,7 +684,7 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	// rabbitmaq-cluster-operator-manager image rabbit.yaml
 	data.Data["RabbitmqOperator"] = rabbitmqOperator
 
-	// messaging-topology-operator template data (handled by dedicated controller)
+	// messaging-topology-operator image messaging-topology.yaml
 	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
 	// openstack-operator-controller-manager image operator.yaml
@@ -720,10 +726,6 @@ func (r *OpenStackReconciler) renderAndApply(
 			continue
 		}
 
-		// Skip only the messaging-topology-operator deployment - handled by dedicated controller
-		if obj.GetKind() == "Deployment" && obj.GetName() == "messaging-topology-operator" {
-			continue
-		}
 		if setControllerReference {
 			// Set the controller reference.
 			if obj.GetNamespace() != "" {

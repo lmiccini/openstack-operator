@@ -12,8 +12,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: quay.io/openstack-k8s-operators/openstack-operator
-  newTag: latest
+  newName: quay.io/lmiccini/openstack-operator
+  newTag: v0.1.8
 patches:
 - patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
     {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.4.0-1753786481"}}]'
@@ -23,6 +23,48 @@ patches:
     namespace: system
 - patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/1", "value":
     {"name": "OPERATOR_IMAGE_URL", "value": "quay.io/openstack-k8s-operators/openstack-operator:latest"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
+    {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.1.7-1761654239"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/1", "value":
+    {"name": "OPERATOR_IMAGE_URL", "value": "quay.io/lmiccini/openstack-operator:v0.1.7"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
+    {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.1.7-1761656417"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
+    {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.1.7-1761657597"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
+    {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.1.7-1761659709"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/0", "value":
+    {"name": "OPENSTACK_RELEASE_VERSION", "value": "0.1.8-1761660467"}}]'
+  target:
+    kind: Deployment
+    name: openstack-operator-controller-operator
+    namespace: system
+- patch: '[{"op": "replace", "path": "/spec/template/spec/containers/1/env/1", "value":
+    {"name": "OPERATOR_IMAGE_URL", "value": "quay.io/lmiccini/openstack-operator:v0.1.8"}}]'
   target:
     kind: Deployment
     name: openstack-operator-controller-operator

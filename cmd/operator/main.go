@@ -161,13 +161,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&operatorcontrollers.MessagingTopologyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "MessagingTopology")
-		os.Exit(1)
-	}
 	operatorcontrollers.SetupEnv()
 
 	if err := mgr.AddHealthzCheck("healthz", checker); err != nil {

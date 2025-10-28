@@ -18,8 +18,11 @@ rules:
   resources:
   - secrets
   verbs:
+  - create
   - get
   - list
+  - update
+  - watch
 - apiGroups:
   - admissionregistration.k8s.io
   resources:

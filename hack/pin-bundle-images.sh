@@ -90,5 +90,5 @@ if [ -z "$DOCKERFILE" ]; then
     # pin rabbit to sha256 for our v2.16.0_patches fork
     echo -n ",quay.io/openstack-k8s-operators/rabbitmq-cluster-operator-bundle@sha256:1612b82e274827281af1d64740a7d52e21745bc74c91d5149f111135d8e7779f"
     # pin messaging-topology-operator bundle
-    echo -n ",quay.io/lmiccini/messaging-topology-operator-bundle:latest"
+    echo -n ",quay.io/lmiccini/messaging-topology-operator-bundle:6f49d9b69f825419a9d9ca1191290314de283889"
 fi
