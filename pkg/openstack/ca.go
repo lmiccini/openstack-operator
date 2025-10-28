@@ -15,6 +15,7 @@ import (
 
 	certmgrv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	certmgrmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/go-logr/logr"
 	"github.com/openstack-k8s-operators/lib-common/modules/certmanager"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/condition"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/helper"
@@ -970,4 +971,64 @@ func getIssuerAnnotations(certConfig *corev1.CertConfig) map[string]string {
 	}
 
 	return annotations
+}
+
+// ReconcileMessagingTopologyCABundle creates a messaging-topology-ca-bundle secret in the openstack-operators namespace
+// containing all rootca-internal certificates from all OpenStackControlPlane instances across all namespaces
+func ReconcileMessagingTopologyCABundle(ctx context.Context, helper *helper.Helper) error {
+	log := GetLogger(ctx)
+
+	// Collect all internal CA certificates from OpenStackControlPlane instances
+	bundle := newBundle()
+	ctlPlaneList := &corev1.OpenStackControlPlaneList{}
+	if err := helper.GetClient().List(ctx, ctlPlaneList); err != nil {
+		return fmt.Errorf("failed to list OpenStackControlPlane instances: %w", err)
+	}
+
+	for _, ctlPlane := range ctlPlaneList.Items {
+		if err := collectInternalCAs(ctx, helper, &ctlPlane, bundle, log); err != nil {
+			log.Error(err, "Failed to collect CAs", "namespace", ctlPlane.Namespace)
+			continue // Don't fail the entire reconciliation for one namespace
+		}
+	}
+
+	// Create the messaging-topology-ca-bundle secret
+	bundlePEM, err := bundle.getBundlePEM()
+	if err != nil {
+		return fmt.Errorf("failed to create CA bundle PEM: %w", err)
+	}
+
+	secretTemplate := []util.Template{{
+		Name:         "messaging-topology-ca-bundle",
+		Namespace:    "openstack-operators",
+		Type:         util.TemplateTypeNone,
+		InstanceType: "Secret",
+		Labels:       map[string]string{"messaging-topology-ca": ""},
+		CustomData:   map[string]string{"messaging-topology-ca-bundle.crt": bundlePEM},
+		SkipSetOwner: true,
+	}}
+
+	if err := secret.EnsureSecrets(ctx, helper, nil, secretTemplate, nil); err != nil {
+		return fmt.Errorf("failed to create messaging-topology-ca-bundle secret: %w", err)
+	}
+
+	log.Info("Updated messaging-topology-ca-bundle secret")
+	return nil
+}
+
+// collectInternalCAs collects internal CA certificates from a single OpenStackControlPlane namespace
+func collectInternalCAs(ctx context.Context, helper *helper.Helper, ctlPlane *corev1.OpenStackControlPlane, bundle *caBundle, log logr.Logger) error {
+	caSecret, _, err := secret.GetSecret(ctx, helper, tls.CABundleSecret, ctlPlane.Namespace)
+	if err != nil {
+		if k8s_errors.IsNotFound(err) {
+			log.Info("CA bundle secret not found, skipping", "namespace", ctlPlane.Namespace)
+			return nil
+		}
+		return fmt.Errorf("failed to get CA bundle secret: %w", err)
+	}
+
+	if internalCAData, ok := caSecret.Data[tls.InternalCABundleKey]; ok {
+		return bundle.getCertsFromPEM(internalCAData)
+	}
+	return nil
 }
