@@ -688,12 +688,20 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
 	// Create initial empty messaging-topology-ca-bundle secret if messaging-topology operator is enabled
-	if *messagingTopologyOperator.Deployment.Replicas > 0 {
+	replicas := int32(0)
+	if messagingTopologyOperator.Deployment.Replicas != nil {
+		replicas = *messagingTopologyOperator.Deployment.Replicas
+	}
+	r.GetLogger(ctx).Info("Checking messaging-topology operator", "replicas", replicas, "name", messagingTopologyOperator.Name)
+	if replicas > 0 {
+		r.GetLogger(ctx).Info("Creating initial messaging-topology-ca-bundle secret")
 		err := r.ensureInitialMessagingTopologyCABundleSecret(ctx, instance)
 		if err != nil {
 			r.GetLogger(ctx).Error(err, "Failed to create initial messaging-topology-ca-bundle secret")
 			// Don't fail the deployment, just log the error
 		}
+	} else {
+		r.GetLogger(ctx).Info("Messaging-topology operator disabled, skipping secret creation")
 	}
 
 	// openstack-operator-controller-manager image operator.yaml
