@@ -687,21 +687,12 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	// messaging-topology-operator image messaging-topology.yaml
 	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
-	// Create initial empty messaging-topology-ca-bundle secret if messaging-topology operator is enabled
-	replicas := int32(0)
-	if messagingTopologyOperator.Deployment.Replicas != nil {
-		replicas = *messagingTopologyOperator.Deployment.Replicas
-	}
-	r.GetLogger(ctx).Info("Checking messaging-topology operator", "replicas", replicas, "name", messagingTopologyOperator.Name)
-	if replicas > 0 {
-		r.GetLogger(ctx).Info("Creating initial messaging-topology-ca-bundle secret")
+	// Create initial empty messaging-topology-ca-bundle secret
+	if messagingTopologyOperator.Name != "" {
 		err := r.ensureInitialMessagingTopologyCABundleSecret(ctx, instance)
 		if err != nil {
-			r.GetLogger(ctx).Error(err, "Failed to create initial messaging-topology-ca-bundle secret")
-			// Don't fail the deployment, just log the error
+			r.GetLogger(ctx).Error(err, "Failed to create messaging-topology-ca-bundle secret")
 		}
-	} else {
-		r.GetLogger(ctx).Info("Messaging-topology operator disabled, skipping secret creation")
 	}
 
 	// openstack-operator-controller-manager image operator.yaml
@@ -967,41 +958,24 @@ func (r *OpenStackReconciler) postCleanupObsoleteResources(ctx context.Context, 
 }
 
 // ensureInitialMessagingTopologyCABundleSecret creates an empty messaging-topology-ca-bundle secret
-// during operator installation so the messaging-topology operator can start successfully
 func (r *OpenStackReconciler) ensureInitialMessagingTopologyCABundleSecret(ctx context.Context, instance *operatorv1beta1.OpenStack) error {
-	Log := r.GetLogger(ctx)
-
-	// Get the operator namespace (same namespace where messaging-topology operator is deployed)
-	operatorNamespace := instance.Namespace
-
-	// Create empty secret directly using Kubernetes client
-	secretObj := &corev1.Secret{
+	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "messaging-topology-ca-bundle",
-			Namespace: operatorNamespace,
-			Labels:    map[string]string{"messaging-topology-ca": ""},
+			Namespace: instance.Namespace,
 		},
 		Data: map[string][]byte{
-			"messaging-topology-ca-bundle.crt": []byte(""), // Empty initially
+			"messaging-topology-ca-bundle.crt": []byte(""),
 		},
 	}
 
-	// Use CreateOrUpdate to ensure the secret exists
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secretObj, func() error {
-		// Only create if it doesn't exist - don't overwrite existing content
-		if secretObj.Data == nil {
-			secretObj.Data = map[string][]byte{
-				"messaging-topology-ca-bundle.crt": []byte(""),
-			}
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{"messaging-topology-ca-bundle.crt": []byte("")}
 		}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("failed to create initial messaging-topology-ca-bundle secret: %w", err)
-	}
-
-	Log.Info("Ensured initial messaging-topology-ca-bundle secret exists", "namespace", operatorNamespace)
-	return nil
+	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.
