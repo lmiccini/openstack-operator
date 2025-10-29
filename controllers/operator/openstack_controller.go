@@ -256,6 +256,12 @@ func (r *OpenStackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileDelete(ctx, instance, openstackHelper)
 	}
 
+	// ALWAYS ensure messaging-topology-ca-bundle secret exists (critical for operator startup)
+	r.GetLogger(ctx).Info("EARLY: Ensuring messaging-topology-ca-bundle secret exists")
+	if err := r.ensureInitialSecretExists(ctx, instance); err != nil {
+		r.GetLogger(ctx).Error(err, "EARLY: Failed to ensure messaging-topology-ca-bundle secret")
+	}
+
 	// cleanup obsolete resources here (remove old CSVs, etc)
 	if err := r.cleanupObsoleteResources(ctx, instance); err != nil {
 		return ctrl.Result{}, err
@@ -269,14 +275,6 @@ func (r *OpenStackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			operatorv1beta1.OpenStackOperatorErrorMessage,
 			err))
 		return ctrl.Result{}, err
-	}
-
-	// Create messaging-topology-ca-bundle secret only if it doesn't exist
-	r.GetLogger(ctx).Info("DEBUG: About to ensure messaging-topology-ca-bundle secret")
-	if err := r.ensureInitialSecretExists(ctx, instance); err != nil {
-		r.GetLogger(ctx).Error(err, "Failed to ensure messaging-topology-ca-bundle secret")
-	} else {
-		r.GetLogger(ctx).Info("DEBUG: messaging-topology-ca-bundle secret check completed successfully")
 	}
 
 	// now that CRDs have been updated (with old olm.managed references removed)
@@ -701,6 +699,13 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 
 	// service operators
 	data.Data["ServiceOperators"] = serviceOperators // -> service operator images managers.yaml
+
+	// Create messaging-topology-ca-bundle secret before applying operators
+	r.GetLogger(ctx).Info("Creating messaging-topology-ca-bundle secret before operator deployment")
+	if err := r.ensureInitialSecretExists(ctx, instance); err != nil {
+		r.GetLogger(ctx).Error(err, "Failed to create messaging-topology-ca-bundle secret")
+		// Don't fail operator deployment, just log error
+	}
 
 	return r.renderAndApply(ctx, instance, data, "operator", true)
 }
