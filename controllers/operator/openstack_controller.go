@@ -271,6 +271,11 @@ func (r *OpenStackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
+	// Create messaging-topology-ca-bundle secret only if it doesn't exist
+	if err := r.ensureInitialSecretExists(ctx, instance); err != nil {
+		r.GetLogger(ctx).Error(err, "Failed to ensure messaging-topology-ca-bundle secret")
+	}
+
 	// now that CRDs have been updated (with old olm.managed references removed)
 	// we can finally cleanup the old operators
 	if err := r.postCleanupObsoleteResources(ctx, instance); err != nil {
@@ -688,20 +693,6 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	// messaging-topology-operator image messaging-topology.yaml
 	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
-	// Create initial empty messaging-topology-ca-bundle secret
-	r.GetLogger(ctx).Info("Checking messaging-topology operator", "name", messagingTopologyOperator.Name)
-	if messagingTopologyOperator.Name != "" {
-		r.GetLogger(ctx).Info("Creating messaging-topology-ca-bundle secret")
-		err := r.ensureInitialMessagingTopologyCABundleSecret(ctx, instance)
-		if err != nil {
-			r.GetLogger(ctx).Error(err, "Failed to create messaging-topology-ca-bundle secret")
-		} else {
-			r.GetLogger(ctx).Info("Successfully created messaging-topology-ca-bundle secret")
-		}
-	} else {
-		r.GetLogger(ctx).Info("messaging-topology operator not found")
-	}
-
 	// openstack-operator-controller-manager image operator.yaml
 	data.Data["OpenStackOperator"] = openstackOperator
 
@@ -964,9 +955,26 @@ func (r *OpenStackReconciler) postCleanupObsoleteResources(ctx context.Context, 
 
 }
 
-// ensureInitialMessagingTopologyCABundleSecret creates an empty messaging-topology-ca-bundle secret
-func (r *OpenStackReconciler) ensureInitialMessagingTopologyCABundleSecret(ctx context.Context, instance *operatorv1beta1.OpenStack) error {
-	secret := &corev1.Secret{
+// ensureInitialSecretExists creates messaging-topology-ca-bundle secret only if it doesn't exist
+func (r *OpenStackReconciler) ensureInitialSecretExists(ctx context.Context, instance *operatorv1beta1.OpenStack) error {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{
+		Name:      "messaging-topology-ca-bundle",
+		Namespace: instance.Namespace,
+	}, secret)
+
+	if err == nil {
+		// Secret exists, don't touch it
+		return nil
+	}
+
+	if !apierrors.IsNotFound(err) {
+		// Some other error
+		return err
+	}
+
+	// Secret doesn't exist, create it
+	secret = &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "messaging-topology-ca-bundle",
 			Namespace: instance.Namespace,
@@ -976,13 +984,7 @@ func (r *OpenStackReconciler) ensureInitialMessagingTopologyCABundleSecret(ctx c
 		},
 	}
 
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		if secret.Data == nil {
-			secret.Data = map[string][]byte{"messaging-topology-ca-bundle.crt": []byte("")}
-		}
-		return nil
-	})
-	return err
+	return r.Create(ctx, secret)
 }
 
 // SetupWithManager sets up the controller with the Manager.
