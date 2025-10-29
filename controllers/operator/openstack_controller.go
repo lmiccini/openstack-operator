@@ -503,6 +503,7 @@ func (r *OpenStackReconciler) applyRBAC(ctx context.Context, instance *operatorv
 }
 
 func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *operatorv1beta1.OpenStack) error {
+	r.GetLogger(ctx).Info("applyOperator called")
 	kubeRbacProxyContainer := operator.Container{
 		Image: kubeRbacProxyImage,
 		Resources: operator.Resource{
@@ -688,11 +689,17 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	data.Data["MessagingTopologyOperator"] = messagingTopologyOperator
 
 	// Create initial empty messaging-topology-ca-bundle secret
+	r.GetLogger(ctx).Info("Checking messaging-topology operator", "name", messagingTopologyOperator.Name)
 	if messagingTopologyOperator.Name != "" {
+		r.GetLogger(ctx).Info("Creating messaging-topology-ca-bundle secret")
 		err := r.ensureInitialMessagingTopologyCABundleSecret(ctx, instance)
 		if err != nil {
 			r.GetLogger(ctx).Error(err, "Failed to create messaging-topology-ca-bundle secret")
+		} else {
+			r.GetLogger(ctx).Info("Successfully created messaging-topology-ca-bundle secret")
 		}
+	} else {
+		r.GetLogger(ctx).Info("messaging-topology operator not found")
 	}
 
 	// openstack-operator-controller-manager image operator.yaml
