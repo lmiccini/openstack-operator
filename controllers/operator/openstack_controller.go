@@ -256,14 +256,6 @@ func (r *OpenStackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileDelete(ctx, instance, openstackHelper)
 	}
 
-	// Ensure messaging-topology-ca-bundle secret exists (run every reconcile)
-	r.GetLogger(ctx).Info("Ensuring messaging-topology-ca-bundle secret exists")
-	if err := r.ensureInitialSecretExists(ctx, instance); err != nil {
-		r.GetLogger(ctx).Error(err, "Failed to ensure messaging-topology-ca-bundle secret")
-	} else {
-		r.GetLogger(ctx).Info("messaging-topology-ca-bundle secret ensured successfully")
-	}
-
 	// cleanup obsolete resources here (remove old CSVs, etc)
 	if err := r.cleanupObsoleteResources(ctx, instance); err != nil {
 		return ctrl.Result{}, err
@@ -956,49 +948,6 @@ func (r *OpenStackReconciler) postCleanupObsoleteResources(ctx context.Context, 
 
 	return nil
 
-}
-
-// ensureInitialSecretExists creates messaging-topology-ca-bundle secret only if it doesn't exist
-func (r *OpenStackReconciler) ensureInitialSecretExists(ctx context.Context, instance *operatorv1beta1.OpenStack) error {
-	log := r.GetLogger(ctx)
-	log.Info("DEBUG: Checking if messaging-topology-ca-bundle secret exists", "namespace", instance.Namespace)
-
-	secret := &corev1.Secret{}
-	err := r.Get(ctx, client.ObjectKey{
-		Name:      "messaging-topology-ca-bundle",
-		Namespace: instance.Namespace,
-	}, secret)
-
-	if err == nil {
-		log.Info("DEBUG: messaging-topology-ca-bundle secret already exists, skipping creation")
-		return nil
-	}
-
-	if !apierrors.IsNotFound(err) {
-		log.Error(err, "DEBUG: Error checking for secret (not NotFound)")
-		return err
-	}
-
-	// Secret doesn't exist, create it
-	log.Info("DEBUG: messaging-topology-ca-bundle secret doesn't exist, creating it")
-	secret = &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "messaging-topology-ca-bundle",
-			Namespace: instance.Namespace,
-		},
-		Data: map[string][]byte{
-			"messaging-topology-ca-bundle.crt": []byte(""),
-		},
-	}
-
-	err = r.Create(ctx, secret)
-	if err != nil {
-		log.Error(err, "DEBUG: Failed to create messaging-topology-ca-bundle secret")
-		return err
-	}
-
-	log.Info("DEBUG: Successfully created messaging-topology-ca-bundle secret")
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
