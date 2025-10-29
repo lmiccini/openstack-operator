@@ -162,6 +162,7 @@ bindata: kustomize yq ## Call sync bindata script
 	cp config/operator/managers.yaml bindata/operator/
 	cp config/operator/rabbit.yaml bindata/operator/
 	cp config/operator/messaging-topology.yaml bindata/operator/
+	cp config/operator/messaging-topology-ca-bundle-secret.yaml bindata/operator/
 	$(KUSTOMIZE) build config/rbac > bindata/rbac/rbac.yaml
 	/bin/bash hack/sync-bindata.sh
 

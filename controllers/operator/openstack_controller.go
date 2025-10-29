@@ -256,6 +256,14 @@ func (r *OpenStackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.reconcileDelete(ctx, instance, openstackHelper)
 	}
 
+	// Ensure messaging-topology-ca-bundle secret exists (run every reconcile)
+	r.GetLogger(ctx).Info("Ensuring messaging-topology-ca-bundle secret exists")
+	if err := r.ensureInitialSecretExists(ctx, instance); err != nil {
+		r.GetLogger(ctx).Error(err, "Failed to ensure messaging-topology-ca-bundle secret")
+	} else {
+		r.GetLogger(ctx).Info("messaging-topology-ca-bundle secret ensured successfully")
+	}
+
 	// cleanup obsolete resources here (remove old CSVs, etc)
 	if err := r.cleanupObsoleteResources(ctx, instance); err != nil {
 		return ctrl.Result{}, err
