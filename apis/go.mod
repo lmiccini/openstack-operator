@@ -5,7 +5,7 @@ go 1.24.4
 require (
 	github.com/cert-manager/cert-manager v1.16.5
 	github.com/go-playground/validator/v10 v10.28.0
-	github.com/onsi/ginkgo/v2 v2.26.0
+	github.com/onsi/ginkgo/v2 v2.27.1
 	github.com/onsi/gomega v1.38.2
 	github.com/openstack-k8s-operators/barbican-operator/api v0.6.1-0.20251014175433-c4ab8419a351
 	github.com/openstack-k8s-operators/cinder-operator/api v0.6.1-0.20251014173752-ea967e56a392
@@ -144,3 +144,5 @@ replace k8s.io/code-generator => k8s.io/code-generator v0.31.13 //allow-merging
 replace k8s.io/component-base => k8s.io/component-base v0.31.13 //allow-merging
 
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.1.2-0.20241127223932-88edb96860cf //allow-merging
+
+replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20251104125004-93d93b31809a
