@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/iancoleman/strcase"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/go-logr/logr"
 	infranetworkv1 "github.com/openstack-k8s-operators/infra-operator/apis/network/v1beta1"
+	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
 	condition "github.com/openstack-k8s-operators/lib-common/modules/common/condition"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/helper"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/rolebinding"
@@ -108,6 +110,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) GetLogger(ctx context.Context) log
 // +kubebuilder:rbac:groups=network.openstack.org,resources=dnsdata/finalizers,verbs=update;patch
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete;
 // +kubebuilder:rbac:groups=core.openstack.org,resources=openstackversions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rabbitmq.openstack.org,resources=rabbitmqusers,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=rabbitmq.openstack.org,resources=rabbitmqusers/finalizers,verbs=update;patch
 
 // RBAC for the ServiceAccount for the internal image registry
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
@@ -403,7 +407,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) Reconcile(ctx context.Context, req
 	}
 
 	isDeploymentReady, isDeploymentRunning, isDeploymentFailed, failedDeployment, err := checkDeployment(
-		ctx, helper, instance)
+		ctx, helper, instance, r)
 	if !isDeploymentFailed && err != nil {
 		instance.Status.Conditions.MarkFalse(
 			condition.DeploymentReadyCondition,
@@ -488,7 +492,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) Reconcile(ctx context.Context, req
 }
 
 func checkDeployment(ctx context.Context, helper *helper.Helper,
-	instance *dataplanev1.OpenStackDataPlaneNodeSet) (
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	r *OpenStackDataPlaneNodeSetReconciler) (
 	isNodeSetDeploymentReady bool, isNodeSetDeploymentRunning bool,
 	isNodeSetDeploymentFailed bool, failedDeploymentName string, err error) {
 
@@ -530,6 +535,10 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 		})
 		latestRelevantDeployment = relevantDeployments[len(relevantDeployments)-1]
 	}
+
+	// Get nova-cellX-compute-config secrets with their modification times
+	// Do this before the loop to avoid variable shadowing of 'deployment' package
+	secretsLastModified, errSecrets := deployment.GetNovaCellSecretsLastModified(ctx, helper, instance.Namespace)
 
 	for _, deployment := range relevantDeployments {
 		// Always add to DeploymentStatuses (for visibility)
@@ -576,6 +585,7 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 					deployment.Status.BmhRefHashes[instance.Name] != instance.Status.BmhRefHash) {
 				continue
 			}
+
 			isNodeSetDeploymentReady = true
 			for k, v := range deployment.Status.ConfigMapHashes {
 				instance.Status.ConfigMapHashes[k] = v
@@ -595,6 +605,73 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 				services = deployment.Spec.ServicesOverride
 			} else {
 				services = instance.Spec.Services
+			}
+
+			// Check each service's edpmServiceType to detect nova service deployment
+			novaServiceDeployed := false
+			var novaServiceName string
+			for _, serviceName := range services {
+				service := &dataplanev1.OpenStackDataPlaneService{}
+				name := types.NamespacedName{
+					Namespace: instance.Namespace,
+					Name:      serviceName,
+				}
+				err := helper.GetClient().Get(ctx, name, service)
+				if err != nil {
+					helper.GetLogger().Error(err, "Unable to retrieve OpenStackDataPlaneService", "service", serviceName)
+					continue
+				}
+
+				// Check if this is a nova service based on edpmServiceType
+				serviceType := service.Spec.EDPMServiceType
+				if serviceType == "" {
+					// If not set, defaults to the service name
+					serviceType = serviceName
+				}
+
+				if serviceType == "nova" {
+					novaServiceName = serviceName
+					novaServiceCondition := condition.Type(fmt.Sprintf("Service%sDeploymentReady", strcase.ToCamel(serviceName)))
+					if deploymentConditions.IsTrue(novaServiceCondition) {
+						novaServiceDeployed = true
+					}
+					break
+				}
+			}
+
+			// If nova service was deployed successfully AND this is the latest deployment,
+			// manage RabbitMQ user finalizers. Only manage finalizers when we're confident
+			// about the current state (no deployments in progress).
+			// IMPORTANT: Check that no other deployment is running to avoid premature cleanup
+			if novaServiceDeployed && isLatestDeployment && !isNodeSetDeploymentRunning {
+				if errSecrets != nil {
+					helper.GetLogger().Error(errSecrets, "Failed to get Nova cell secrets last modified times")
+				} else {
+					// Check if this deployment was created AFTER the secrets were last modified
+					// Only manage finalizers if the deployment was created with the current secret state
+					deploymentCreatedAfterSecrets := true
+					deploymentCreationTime := deployment.CreationTimestamp.Time
+					for secretName, secretModTime := range secretsLastModified {
+						if deploymentCreationTime.Before(secretModTime) {
+							helper.GetLogger().Info("Deployment created before secret was modified, skipping finalizer management",
+								"deployment", deployment.Name,
+								"deploymentCreated", deploymentCreationTime,
+								"secret", secretName,
+								"secretModified", secretModTime)
+							deploymentCreatedAfterSecrets = false
+							break
+						}
+					}
+
+					if deploymentCreatedAfterSecrets {
+						helper.GetLogger().Info("Nova service deployed successfully, managing RabbitMQ user finalizers", "service", novaServiceName, "deployment", deployment.Name)
+						err := r.manageRabbitMqUserFinalizers(ctx, helper, instance, secretsLastModified)
+						if err != nil {
+							helper.GetLogger().Error(err, "Failed to manage RabbitMQ user finalizers")
+							// Don't fail reconciliation, just log the error
+						}
+					}
+				}
 			}
 
 			// For each service, check if EDPMServiceType is "update" or "update-services", and
@@ -625,6 +702,105 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	}
 
 	return isNodeSetDeploymentReady, isNodeSetDeploymentRunning, isNodeSetDeploymentFailed, failedDeploymentName, err
+}
+
+// manageRabbitMqUserFinalizers manages finalizers on RabbitMqUser CRs using a finalizer-only approach
+// This function:
+// 1. Gets cell names from nova-cellX-compute-config secrets
+// 2. For each cell, extracts the current RabbitMQ username from the secret
+// 3. Finds the RabbitMQUser CR matching that username and adds our finalizer to it
+// 4. Removes our finalizer from any RabbitMQUser CRs that are no longer in use (only if being deleted)
+func (r *OpenStackDataPlaneNodeSetReconciler) manageRabbitMqUserFinalizers(
+	ctx context.Context,
+	helper *helper.Helper,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	secretsLastModified map[string]time.Time,
+) error {
+	Log := r.GetLogger(ctx)
+
+	// Get the finalizer name for this nodeset
+	finalizerName := fmt.Sprintf("nodeset.openstack.org/%s", instance.Name)
+
+	// Get all cell names from nova-cellX-compute-config secrets
+	cellNames, err := deployment.GetNovaComputeConfigCellNames(ctx, helper, instance.Namespace)
+	if err != nil {
+		Log.Info("Failed to get Nova cell names", "error", err)
+		return nil // Don't fail reconciliation
+	}
+
+	if len(cellNames) == 0 {
+		Log.Info("No Nova cells found, skipping finalizer management")
+		return nil
+	}
+
+	// Track current RabbitMQUser CR names that should have our finalizer
+	currentRabbitMQUsers := make(map[string]bool)
+
+	// For each cell, get the RabbitMQUser CR name and ensure our finalizer is on it
+	for _, cellName := range cellNames {
+		rabbitmqUserName, err := deployment.GetNovaCellRabbitMqUserFromSecret(ctx, helper, instance.Namespace, cellName)
+		if err != nil {
+			Log.Info("Failed to get RabbitMQUser CR name for cell", "cell", cellName, "error", err)
+			continue
+		}
+
+		if rabbitmqUserName == "" {
+			// Empty string means using default RabbitMQ user (no dedicated RabbitMQUser CR)
+			Log.Info("Cell is using default RabbitMQ user, skipping finalizer management", "cell", cellName)
+			continue
+		}
+
+		currentRabbitMQUsers[rabbitmqUserName] = true
+		Log.Info("Found RabbitMQUser CR for cell", "cell", cellName, "rabbitmqUser", rabbitmqUserName)
+	}
+
+	// List all RabbitMqUsers in the namespace
+	rabbitmqUserList := &rabbitmqv1.RabbitMQUserList{}
+	err = r.List(ctx, rabbitmqUserList, client.InNamespace(instance.Namespace))
+	if err != nil {
+		return fmt.Errorf("failed to list RabbitMQUsers: %w", err)
+	}
+
+	// Process each RabbitMqUser
+	for i := range rabbitmqUserList.Items {
+		rabbitmqUser := &rabbitmqUserList.Items[i]
+
+		// Check if this RabbitMQUser CR is currently in use by this nodeset
+		// Match by CR name (we get the CR name directly from TransportURL.Spec.UserRef)
+		isCurrentlyInUse := currentRabbitMQUsers[rabbitmqUser.Name]
+
+		hasFinalizer := slices.Contains(rabbitmqUser.Finalizers, finalizerName)
+
+		if isCurrentlyInUse && !hasFinalizer {
+			// Add finalizer to this RabbitMqUser (this is the current user)
+			Log.Info("Adding finalizer to RabbitMqUser", "user", rabbitmqUser.Name, "finalizer", finalizerName)
+			rabbitmqUser.Finalizers = append(rabbitmqUser.Finalizers, finalizerName)
+			err = r.Update(ctx, rabbitmqUser)
+			if err != nil {
+				return fmt.Errorf("failed to add finalizer to RabbitMQUser %s: %w", rabbitmqUser.Name, err)
+			}
+		} else if !isCurrentlyInUse && hasFinalizer {
+			// Remove finalizer from this RabbitMqUser (no longer in use)
+			// Safe to remove because we only reach here when:
+			// 1. The deployment was created AFTER the secret was modified
+			// 2. No deployments are currently running
+			// 3. This user is not in the current secret configuration
+			Log.Info("Removing finalizer from RabbitMqUser (no longer in use)", "user", rabbitmqUser.Name, "finalizer", finalizerName)
+			var newFinalizers []string
+			for _, f := range rabbitmqUser.Finalizers {
+				if f != finalizerName {
+					newFinalizers = append(newFinalizers, f)
+				}
+			}
+			rabbitmqUser.Finalizers = newFinalizers
+			err = r.Update(ctx, rabbitmqUser)
+			if err != nil {
+				return fmt.Errorf("failed to remove finalizer from RabbitMQUser %s: %w", rabbitmqUser.Name, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

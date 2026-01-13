@@ -478,9 +478,33 @@ spec:
                         - simple_crypto
                         - pkcs11
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       passwordSelectors:
                         default:
@@ -1597,9 +1621,33 @@ spec:
                       memcachedInstance:
                         default: memcached
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       notificationsBusInstance:
                         type: string
@@ -2722,9 +2770,33 @@ spec:
                           transportURLSecret:
                             type: string
                         type: object
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       nsRecords:
                         items:
@@ -4384,6 +4456,18 @@ spec:
                         type: object
                       notificationBusInstance:
                         type: string
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       passwordSelectors:
                         default:
                           service: GlancePassword
@@ -5564,9 +5648,33 @@ spec:
                       memcachedInstance:
                         default: memcached
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       passwordSelectors:
                         default:
@@ -5589,6 +5697,18 @@ spec:
                       rabbitMqClusterName:
                         default: rabbitmq
                         type: string
+                      rabbitmq:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       secret:
                         type: string
                       serviceUser:
@@ -7088,9 +7208,33 @@ spec:
                             additionalProperties:
                               type: string
                             type: object
+                          messagingBus:
+                            properties:
+                              cluster:
+                                minLength: 1
+                                type: string
+                              user:
+                                type: string
+                              vhost:
+                                type: string
+                            required:
+                            - cluster
+                            type: object
                           nodeSelector:
                             additionalProperties:
                               type: string
+                            type: object
+                          notificationsBus:
+                            properties:
+                              cluster:
+                                minLength: 1
+                                type: string
+                              user:
+                                type: string
+                              vhost:
+                                type: string
+                            required:
+                            - cluster
                             type: object
                           rabbitMqClusterName:
                             default: rabbitmq
@@ -7142,9 +7286,33 @@ spec:
                                 type: string
                             type: object
                         type: object
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       passwordSelectors:
                         default:
@@ -7888,6 +8056,18 @@ spec:
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       override:
                         properties:
@@ -8975,9 +9155,33 @@ spec:
                       memcachedInstance:
                         default: memcached
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       notificationsBusInstance:
                         type: string
@@ -9768,6 +9972,18 @@ spec:
                       memcachedInstance:
                         default: memcached
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       ml2MechanismDrivers:
                         default:
                         - ovn
@@ -9781,6 +9997,18 @@ spec:
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       notificationsBusInstance:
                         type: string
@@ -10434,6 +10662,18 @@ spec:
                               type: boolean
                             memcachedInstance:
                               type: string
+                            messagingBus:
+                              properties:
+                                cluster:
+                                  minLength: 1
+                                  type: string
+                                user:
+                                  type: string
+                                vhost:
+                                  type: string
+                              required:
+                              - cluster
+                              type: object
                             metadataServiceTemplate:
                               properties:
                                 customServiceConfig:
@@ -10783,6 +11023,18 @@ spec:
                       memcachedInstance:
                         default: memcached
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       metadataServiceTemplate:
                         default:
                           enabled: true
@@ -10908,6 +11160,18 @@ spec:
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       notificationsBusInstance:
                         type: string
@@ -11200,9 +11464,33 @@ spec:
                             default: true
                             type: boolean
                         type: object
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       octaviaAPI:
                         properties:
@@ -11230,6 +11518,8 @@ spec:
                             additionalProperties:
                               type: string
                             type: object
+                          notificationsTransportURLSecret:
+                            type: string
                           override:
                             properties:
                               service:
@@ -11444,6 +11734,8 @@ spec:
                             additionalProperties:
                               type: string
                             type: object
+                          notificationsTransportURLSecret:
+                            type: string
                           octaviaProviderSubnetCIDR:
                             type: string
                           octaviaProviderSubnetExtraCIDRs:
@@ -11596,6 +11888,8 @@ spec:
                             additionalProperties:
                               type: string
                             type: object
+                          notificationsTransportURLSecret:
+                            type: string
                           octaviaProviderSubnetCIDR:
                             type: string
                           octaviaProviderSubnetExtraCIDRs:
@@ -11854,6 +12148,8 @@ spec:
                             additionalProperties:
                               type: string
                             type: object
+                          notificationsTransportURLSecret:
+                            type: string
                           octaviaProviderSubnetCIDR:
                             type: string
                           octaviaProviderSubnetExtraCIDRs:
@@ -14620,6 +14916,18 @@ spec:
                               memcachedInstance:
                                 default: memcached
                                 type: string
+                              messagingBus:
+                                properties:
+                                  cluster:
+                                    minLength: 1
+                                    type: string
+                                  user:
+                                    type: string
+                                  vhost:
+                                    type: string
+                                required:
+                                - cluster
+                                type: object
                               networkAttachmentDefinitions:
                                 items:
                                   type: string
@@ -14627,6 +14935,18 @@ spec:
                               nodeSelector:
                                 additionalProperties:
                                   type: string
+                                type: object
+                              notificationsBus:
+                                properties:
+                                  cluster:
+                                    minLength: 1
+                                    type: string
+                                  user:
+                                    type: string
+                                  vhost:
+                                    type: string
+                                required:
+                                - cluster
                                 type: object
                               override:
                                 properties:
@@ -14790,6 +15110,18 @@ spec:
                               secretName:
                                 type: string
                             type: object
+                          messagingBus:
+                            properties:
+                              cluster:
+                                minLength: 1
+                                type: string
+                              user:
+                                type: string
+                              vhost:
+                                type: string
+                            required:
+                            - cluster
+                            type: object
                           mysqldExporterDatabaseAccountPrefix:
                             default: mysqld-exporter
                             type: string
@@ -14810,6 +15142,18 @@ spec:
                           nodeSelector:
                             additionalProperties:
                               type: string
+                            type: object
+                          notificationsBus:
+                            properties:
+                              cluster:
+                                minLength: 1
+                                type: string
+                              user:
+                                type: string
+                              vhost:
+                                type: string
+                            required:
+                            - cluster
                             type: object
                           passwordSelector:
                             default:
@@ -15085,9 +15429,33 @@ spec:
                           memcachedInstance:
                             default: memcached
                             type: string
+                          messagingBus:
+                            properties:
+                              cluster:
+                                minLength: 1
+                                type: string
+                              user:
+                                type: string
+                              vhost:
+                                type: string
+                            required:
+                            - cluster
+                            type: object
                           nodeSelector:
                             additionalProperties:
                               type: string
+                            type: object
+                          notificationsBus:
+                            properties:
+                              cluster:
+                                minLength: 1
+                                type: string
+                              user:
+                                type: string
+                              vhost:
+                                type: string
+                            required:
+                            - cluster
                             type: object
                           passwordSelector:
                             default:
@@ -16505,9 +16873,33 @@ spec:
                       memcachedInstance:
                         default: memcached
                         type: string
+                      messagingBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
+                        type: object
                       nodeSelector:
                         additionalProperties:
                           type: string
+                        type: object
+                      notificationsBus:
+                        properties:
+                          cluster:
+                            minLength: 1
+                            type: string
+                          user:
+                            type: string
+                          vhost:
+                            type: string
+                        required:
+                        - cluster
                         type: object
                       notificationsBusInstance:
                         type: string
