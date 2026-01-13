@@ -99,6 +99,12 @@ rules:
     - update
     - watch
 - apiGroups:
+    - '*'
+  resources:
+    - '*'
+  verbs:
+    - get
+- apiGroups:
     - apps
   resources:
     - deployments
