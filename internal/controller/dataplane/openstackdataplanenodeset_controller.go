@@ -520,9 +520,13 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 		}
 	}
 
+	// If there are no active deployments, we should not manage RabbitMQ finalizers
+	// because we can't reliably verify the current state
+	hasActiveDeployments := len(relevantDeployments) > 0
+
 	// Sort relevant deployments from oldest to newest, then take the last one
 	var latestRelevantDeployment *dataplanev1.OpenStackDataPlaneDeployment
-	if len(relevantDeployments) > 0 {
+	if hasActiveDeployments {
 		slices.SortFunc(relevantDeployments, func(a, b *dataplanev1.OpenStackDataPlaneDeployment) int {
 			aReady := a.Status.Conditions.Get(condition.DeploymentReadyCondition)
 			bReady := b.Status.Conditions.Get(condition.DeploymentReadyCondition)
@@ -666,28 +670,51 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			// manage RabbitMQ user finalizers. Only manage finalizers when we're confident
 			// about the current state (no deployments in progress).
 			// IMPORTANT: Check that no other deployment is running to avoid premature cleanup
-			if novaServiceDeployed && isLatestDeployment && !isNodeSetDeploymentRunning {
+			// IMPORTANT: Don't manage finalizers if the deployment is being deleted
+			// IMPORTANT: Require at least one active deployment to ensure reliable state
+			// NOTE: We rely on the secret hash mechanism to ensure only deployments with
+			// the current secret version populate UpdatedNodesAfterSecretChange. When the
+			// secret hash changes, that list is reset, so deployments must re-run to populate it.
+			isDeploymentBeingDeleted := !deployment.DeletionTimestamp.IsZero()
+
+			if novaServiceDeployed && isLatestDeployment && !isNodeSetDeploymentRunning && !isDeploymentBeingDeleted && hasActiveDeployments {
 				helper.GetLogger().Info("Checking if RabbitMQ finalizers should be managed",
 					"deployment", deployment.Name,
 					"novaServiceDeployed", novaServiceDeployed,
 					"isLatestDeployment", isLatestDeployment,
-					"isNodeSetDeploymentRunning", isNodeSetDeploymentRunning)
+					"isNodeSetDeploymentRunning", isNodeSetDeploymentRunning,
+					"isDeploymentBeingDeleted", isDeploymentBeingDeleted,
+					"hasActiveDeployments", hasActiveDeployments)
 				if errSecrets != nil {
 					helper.GetLogger().Error(errSecrets, "Failed to get Nova cell secrets last modified times")
 				} else {
-					// Check if all nodesets using the same RabbitMQ cluster have been updated
-					// This includes tracking node coverage across multiple AnsibleLimit deployments
-					allNodesetsUpdated, err := r.allNodesetsUsingClusterUpdated(ctx, helper, instance, secretsLastModified)
-					if err != nil {
-						helper.GetLogger().Error(err, "Failed to check if all nodesets are updated")
-					} else if !allNodesetsUpdated {
-						helper.GetLogger().Info("Not all nodesets using the same RabbitMQ cluster have been updated, skipping finalizer removal")
+					// Safety check: Only manage finalizers if we have complete tracking information
+					// 1. The nodeset must have a secret hash set (meaning we're tracking secret changes)
+					// 2. All nodes in the nodeset must be accounted for in UpdatedNodesAfterSecretChange
+					if instance.Status.NovaCellSecretHash == "" {
+						helper.GetLogger().Info("No secret hash set yet, skipping finalizer management")
 					} else {
-						helper.GetLogger().Info("Nova service deployed successfully and all nodes updated, managing RabbitMQ user finalizers", "service", novaServiceName, "deployment", deployment.Name)
-						err := r.manageRabbitMqUserFinalizers(ctx, helper, instance)
-						if err != nil {
-							helper.GetLogger().Error(err, "Failed to manage RabbitMQ user finalizers")
-							// Don't fail reconciliation, just log the error
+						allNodeNames := r.getAllNodeNamesFromNodeset(instance)
+						if len(instance.Status.UpdatedNodesAfterSecretChange) != len(allNodeNames) {
+							helper.GetLogger().Info("Not all nodes accounted for in UpdatedNodesAfterSecretChange, skipping finalizer management",
+								"totalNodes", len(allNodeNames),
+								"updatedNodes", len(instance.Status.UpdatedNodesAfterSecretChange))
+						} else {
+							// Check if all nodesets using the same RabbitMQ cluster have been updated
+							// This includes tracking node coverage across multiple AnsibleLimit deployments
+							allNodesetsUpdated, err := r.allNodesetsUsingClusterUpdated(ctx, helper, instance, secretsLastModified)
+							if err != nil {
+								helper.GetLogger().Error(err, "Failed to check if all nodesets are updated")
+							} else if !allNodesetsUpdated {
+								helper.GetLogger().Info("Not all nodesets using the same RabbitMQ cluster have been updated, skipping finalizer removal")
+							} else {
+								helper.GetLogger().Info("Nova service deployed successfully and all nodes updated, managing RabbitMQ user finalizers", "service", novaServiceName, "deployment", deployment.Name)
+								err := r.manageRabbitMqUserFinalizers(ctx, helper, instance)
+								if err != nil {
+									helper.GetLogger().Error(err, "Failed to manage RabbitMQ user finalizers")
+									// Don't fail reconciliation, just log the error
+								}
+							}
 						}
 					}
 				}
@@ -734,11 +761,23 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateNodeCoverage(
 ) {
 	Log := r.GetLogger(ctx)
 
-	// Check if this deployment was created after the secret change
-	deploymentTime := deployment.CreationTimestamp.Time
+	// Check if this deployment completed after the secret change
+	// We check the deployment's ready condition timestamp, not creation timestamp,
+	// because deployments can be created before they run.
+	deploymentConditions := deployment.Status.NodeSetConditions[instance.Name]
+	readyCondition := deploymentConditions.Get(dataplanev1.NodeSetDeploymentReadyCondition)
+	if readyCondition == nil {
+		return
+	}
+
+	deploymentCompletedTime := readyCondition.LastTransitionTime.Time
 	for _, secretModTime := range secretsLastModified {
-		if deploymentTime.Before(secretModTime) {
-			// This deployment was before the secret change, don't track it
+		if deploymentCompletedTime.Before(secretModTime) {
+			// This deployment completed before the secret change, don't track it
+			Log.Info("Deployment completed before secret change, skipping node coverage tracking",
+				"deployment", deployment.Name,
+				"deploymentCompletedTime", deploymentCompletedTime,
+				"secretModTime", secretModTime)
 			return
 		}
 	}
