@@ -134,6 +134,20 @@ func extractUsernameFromCustomConfig(customConfig string) string {
 	return ""
 }
 
+// extractTransportURLFromConfig attempts to extract the full transport_url from a config file
+// This is used to get the RabbitMQ cluster information when transport_url is embedded in the config
+func extractTransportURLFromConfig(customConfig string) string {
+	// Look for transport_url in the config
+	// Format: transport_url=rabbit://username:password@host:port/vhost?options
+	// or: transport_url = rabbit://username:password@host:port/vhost?options
+	transportURLPattern := regexp.MustCompile(`transport_url\s*=\s*(rabbit[^\s\n]+)`)
+	matches := transportURLPattern.FindStringSubmatch(customConfig)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
 // GetNovaComputeConfigCellNames returns a list of cell names from nova-cellX-compute-config secrets
 // referenced in the NodeSet's dataSources
 func GetNovaComputeConfigCellNames(
@@ -285,16 +299,28 @@ func GetRabbitMQClusterForCell(
 			continue
 		}
 
-		// Extract transport_url from secret data
-		transportURLBytes, ok := secret.Data["transport_url"]
-		if !ok {
+		// Extract transport_url from config files (01-nova.conf or custom.conf)
+		// The transport_url is embedded in the config, not as a separate field
+		var transportURL string
+		for _, configKey := range []string{"custom.conf", "01-nova.conf"} {
+			configData, hasConfig := secret.Data[configKey]
+			if !hasConfig {
+				continue
+			}
+			// Try to extract transport_url from config
+			transportURL = extractTransportURLFromConfig(string(configData))
+			if transportURL != "" {
+				break
+			}
+		}
+
+		if transportURL == "" {
 			continue
 		}
 
 		// Parse transport_url to extract hostname (which typically includes cluster info)
 		// Format: rabbit://username:password@host:port/vhost
 		// The host part often contains the cluster name
-		transportURL := string(transportURLBytes)
 		cluster, err := extractClusterFromTransportURL(transportURL)
 		if err == nil && cluster != "" {
 			return cluster, nil
