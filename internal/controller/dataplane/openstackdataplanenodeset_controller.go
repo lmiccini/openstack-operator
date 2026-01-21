@@ -667,6 +667,11 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			// about the current state (no deployments in progress).
 			// IMPORTANT: Check that no other deployment is running to avoid premature cleanup
 			if novaServiceDeployed && isLatestDeployment && !isNodeSetDeploymentRunning {
+				helper.GetLogger().Info("Checking if RabbitMQ finalizers should be managed",
+					"deployment", deployment.Name,
+					"novaServiceDeployed", novaServiceDeployed,
+					"isLatestDeployment", isLatestDeployment,
+					"isNodeSetDeploymentRunning", isNodeSetDeploymentRunning)
 				if errSecrets != nil {
 					helper.GetLogger().Error(errSecrets, "Failed to get Nova cell secrets last modified times")
 				} else {
@@ -814,8 +819,12 @@ func (r *OpenStackDataPlaneNodeSetReconciler) allNodesetsUsingClusterUpdated(
 	}
 
 	if len(clustersUsedByCurrentNodeset) == 0 {
-		// No clusters identified, proceed cautiously
-		return true, nil
+		// No clusters identified - this likely means the RabbitMQ cluster info
+		// is not available yet. We should NOT proceed with finalizer removal
+		// until we can properly verify all nodes are updated.
+		Log.Info("No RabbitMQ clusters identified, cannot verify node coverage - skipping finalizer management",
+			"nodeset", currentNodeset.Name)
+		return false, nil
 	}
 
 	// Get all nodesets in the namespace
@@ -900,15 +909,19 @@ func (r *OpenStackDataPlaneNodeSetReconciler) isNodesetFullyUpdated(
 	if len(uncoveredNodes) > 0 {
 		Log.Info("Not all nodes have been updated yet",
 			"nodeset", nodeset.Name,
+			"allNodeNames", allNodeNames,
+			"coveredNodesList", nodeset.Status.UpdatedNodesAfterSecretChange,
 			"coveredNodes", len(coveredNodes),
 			"totalNodes", len(allNodeNames),
 			"uncoveredCount", len(uncoveredNodes),
-			"exampleUncovered", uncoveredNodes[0])
+			"uncoveredNodes", uncoveredNodes)
 		return false, nil
 	}
 
 	Log.Info("All nodes in nodeset have been successfully updated",
 		"nodeset", nodeset.Name,
+		"allNodeNames", allNodeNames,
+		"coveredNodesList", nodeset.Status.UpdatedNodesAfterSecretChange,
 		"totalNodes", len(allNodeNames),
 		"coveredNodes", len(coveredNodes))
 	return true, nil
