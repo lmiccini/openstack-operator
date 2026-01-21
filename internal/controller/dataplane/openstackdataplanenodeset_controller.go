@@ -927,27 +927,18 @@ func (r *OpenStackDataPlaneNodeSetReconciler) isNodesetFullyUpdated(
 	return true, nil
 }
 
-// getAllNodeNamesFromNodeset extracts all node names and hostnames from a nodeset
+// getAllNodeNamesFromNodeset extracts all node names from a nodeset
+// Only returns the node names (map keys), not hostnames or ansible_host values,
+// since those are just aliases for the same node
 func (r *OpenStackDataPlaneNodeSetReconciler) getAllNodeNamesFromNodeset(
 	nodeset *dataplanev1.OpenStackDataPlaneNodeSet,
 ) []string {
 	nodeNames := make([]string, 0, len(nodeset.Spec.Nodes))
 
-	for nodeName, nodeSpec := range nodeset.Spec.Nodes {
-		// Add the node name from the map key
+	for nodeName := range nodeset.Spec.Nodes {
+		// Only add the node name from the map key
+		// Don't add hostname or ansible_host as they're just aliases for the same node
 		nodeNames = append(nodeNames, nodeName)
-
-		// Also add the hostname if it's different
-		if nodeSpec.HostName != "" && nodeSpec.HostName != nodeName {
-			nodeNames = append(nodeNames, nodeSpec.HostName)
-		}
-
-		// Also add ansible_host if specified
-		if nodeSpec.Ansible.AnsibleHost != "" &&
-			nodeSpec.Ansible.AnsibleHost != nodeName &&
-			nodeSpec.Ansible.AnsibleHost != nodeSpec.HostName {
-			nodeNames = append(nodeNames, nodeSpec.Ansible.AnsibleHost)
-		}
 	}
 
 	return nodeNames
