@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -186,6 +187,40 @@ func ExtractCellNameFromSecretName(secretName string) string {
 	return ""
 }
 
+// ComputeNovaCellSecretsHash calculates a hash of all nova-cellX-compute-config secrets
+// This is used to detect when the secrets change and reset node update tracking
+func ComputeNovaCellSecretsHash(
+	ctx context.Context,
+	h *helper.Helper,
+	namespace string,
+) (string, error) {
+	secretsLastModified, err := GetNovaCellSecretsLastModified(ctx, h, namespace)
+	if err != nil {
+		return "", err
+	}
+
+	if len(secretsLastModified) == 0 {
+		return "", nil
+	}
+
+	// Build a stable string representation of all secrets and their modification times
+	var secretNames []string
+	for name := range secretsLastModified {
+		secretNames = append(secretNames, name)
+	}
+	// Sort for stable hash
+	slices.Sort(secretNames)
+
+	hashData := ""
+	for _, name := range secretNames {
+		modTime := secretsLastModified[name]
+		hashData += fmt.Sprintf("%s:%d;", name, modTime.Unix())
+	}
+
+	// Use a simple hash
+	return fmt.Sprintf("%x", hashData), nil
+}
+
 // GetNovaCellSecretsLastModified returns a map of nova-cellX-compute-config secret names
 // to their last modification timestamps
 func GetNovaCellSecretsLastModified(
@@ -224,4 +259,88 @@ func GetNovaCellSecretsLastModified(
 	}
 
 	return secretTimes, nil
+}
+
+// GetRabbitMQClusterForCell returns the RabbitMQ cluster name used by a specific nova cell
+// by extracting it from the transport_url in the nova-cellX-compute-config secret
+func GetRabbitMQClusterForCell(
+	ctx context.Context,
+	h *helper.Helper,
+	namespace string,
+	cellName string,
+) (string, error) {
+	// List all secrets in the namespace
+	secretList := &corev1.SecretList{}
+	err := h.GetClient().List(ctx, secretList, client.InNamespace(namespace))
+	if err != nil {
+		return "", fmt.Errorf("failed to list secrets: %w", err)
+	}
+
+	// Pattern to match nova-cellX-compute-config secrets
+	secretPattern := regexp.MustCompile(`^nova-(` + cellName + `)-compute-config(-\d+)?$`)
+
+	for _, secret := range secretList.Items {
+		matches := secretPattern.FindStringSubmatch(secret.Name)
+		if matches == nil {
+			continue
+		}
+
+		// Extract transport_url from secret data
+		transportURLBytes, ok := secret.Data["transport_url"]
+		if !ok {
+			continue
+		}
+
+		// Parse transport_url to extract hostname (which typically includes cluster info)
+		// Format: rabbit://username:password@host:port/vhost
+		// The host part often contains the cluster name
+		transportURL := string(transportURLBytes)
+		cluster, err := extractClusterFromTransportURL(transportURL)
+		if err == nil && cluster != "" {
+			return cluster, nil
+		}
+	}
+
+	return "", fmt.Errorf("no RabbitMQ cluster found for cell %s", cellName)
+}
+
+// extractClusterFromTransportURL extracts the cluster identifier from a RabbitMQ transport URL
+// This is a heuristic approach - the cluster name is often part of the hostname
+func extractClusterFromTransportURL(transportURL string) (string, error) {
+	if transportURL == "" {
+		return "", fmt.Errorf("empty transport URL")
+	}
+
+	// Replace rabbit:// or rabbit+tls:// with http:// for URL parsing
+	tempURL := strings.Replace(transportURL, "rabbit://", "http://", 1)
+	tempURL = strings.Replace(tempURL, "rabbit+tls://", "http://", 1)
+
+	parsedURL, err := url.Parse(tempURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	// Extract the hostname (may contain multiple hosts separated by commas)
+	host := parsedURL.Host
+	if host == "" {
+		return "", fmt.Errorf("no host in transport URL")
+	}
+
+	// If multiple hosts, take the first one
+	hosts := strings.Split(host, ",")
+	if len(hosts) > 0 {
+		// Parse the first host to get just the hostname (strip port)
+		firstHost := strings.Split(hosts[0], ":")[0]
+
+		// Extract cluster name - typically the first part of the hostname
+		// e.g., "rabbitmq-cell1.openstack.svc" -> "rabbitmq-cell1"
+		// or "rabbitmq.openstack.svc" -> "rabbitmq"
+		parts := strings.Split(firstHost, ".")
+		if len(parts) > 0 {
+			return parts[0], nil
+		}
+		return firstHost, nil
+	}
+
+	return "", fmt.Errorf("could not extract cluster from transport URL")
 }

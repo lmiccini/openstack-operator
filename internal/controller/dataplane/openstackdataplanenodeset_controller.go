@@ -540,6 +540,22 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	// Do this before the loop to avoid variable shadowing of 'deployment' package
 	secretsLastModified, errSecrets := deployment.GetNovaCellSecretsLastModified(ctx, helper, instance.Namespace)
 
+	// Compute hash of current nova cell secrets to detect changes
+	currentSecretHash, errHash := deployment.ComputeNovaCellSecretsHash(ctx, helper, instance.Namespace)
+	if errHash != nil {
+		helper.GetLogger().Error(errHash, "Failed to compute nova cell secrets hash")
+	} else if currentSecretHash != "" && currentSecretHash != instance.Status.NovaCellSecretHash {
+		// Secret hash changed - reset the node update tracking
+		helper.GetLogger().Info("Nova cell secret hash changed, resetting node update tracking",
+			"oldHash", instance.Status.NovaCellSecretHash,
+			"newHash", currentSecretHash)
+		instance.Status.NovaCellSecretHash = currentSecretHash
+		instance.Status.UpdatedNodesAfterSecretChange = []string{}
+	} else if currentSecretHash != "" && instance.Status.NovaCellSecretHash == "" {
+		// First time seeing secrets
+		instance.Status.NovaCellSecretHash = currentSecretHash
+	}
+
 	for _, deployment := range relevantDeployments {
 		// Always add to DeploymentStatuses (for visibility)
 		deploymentConditions := deployment.Status.NodeSetConditions[instance.Name]
@@ -639,6 +655,13 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 				}
 			}
 
+			// If nova service was deployed successfully, track which nodes were updated
+			if novaServiceDeployed && isCurrentDeploymentReady {
+				// Update the status to track which nodes were covered by this deployment
+				// This persists the state so it survives pod restarts and deployment deletions
+				r.updateNodeCoverage(ctx, helper, instance, deployment, secretsLastModified)
+			}
+
 			// If nova service was deployed successfully AND this is the latest deployment,
 			// manage RabbitMQ user finalizers. Only manage finalizers when we're confident
 			// about the current state (no deployments in progress).
@@ -647,25 +670,16 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 				if errSecrets != nil {
 					helper.GetLogger().Error(errSecrets, "Failed to get Nova cell secrets last modified times")
 				} else {
-					// Check if this deployment was created AFTER the secrets were last modified
-					// Only manage finalizers if the deployment was created with the current secret state
-					deploymentCreatedAfterSecrets := true
-					deploymentCreationTime := deployment.CreationTimestamp.Time
-					for secretName, secretModTime := range secretsLastModified {
-						if deploymentCreationTime.Before(secretModTime) {
-							helper.GetLogger().Info("Deployment created before secret was modified, skipping finalizer management",
-								"deployment", deployment.Name,
-								"deploymentCreated", deploymentCreationTime,
-								"secret", secretName,
-								"secretModified", secretModTime)
-							deploymentCreatedAfterSecrets = false
-							break
-						}
-					}
-
-					if deploymentCreatedAfterSecrets {
-						helper.GetLogger().Info("Nova service deployed successfully, managing RabbitMQ user finalizers", "service", novaServiceName, "deployment", deployment.Name)
-						err := r.manageRabbitMqUserFinalizers(ctx, helper, instance, secretsLastModified)
+					// Check if all nodesets using the same RabbitMQ cluster have been updated
+					// This includes tracking node coverage across multiple AnsibleLimit deployments
+					allNodesetsUpdated, err := r.allNodesetsUsingClusterUpdated(ctx, helper, instance, secretsLastModified)
+					if err != nil {
+						helper.GetLogger().Error(err, "Failed to check if all nodesets are updated")
+					} else if !allNodesetsUpdated {
+						helper.GetLogger().Info("Not all nodesets using the same RabbitMQ cluster have been updated, skipping finalizer removal")
+					} else {
+						helper.GetLogger().Info("Nova service deployed successfully and all nodes updated, managing RabbitMQ user finalizers", "service", novaServiceName, "deployment", deployment.Name)
+						err := r.manageRabbitMqUserFinalizers(ctx, helper, instance)
 						if err != nil {
 							helper.GetLogger().Error(err, "Failed to manage RabbitMQ user finalizers")
 							// Don't fail reconciliation, just log the error
@@ -704,6 +718,293 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	return isNodeSetDeploymentReady, isNodeSetDeploymentRunning, isNodeSetDeploymentFailed, failedDeploymentName, err
 }
 
+// updateNodeCoverage updates the nodeset status to track which nodes have been
+// covered by a successful deployment after the secret change
+func (r *OpenStackDataPlaneNodeSetReconciler) updateNodeCoverage(
+	ctx context.Context,
+	helper *helper.Helper,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	deployment *dataplanev1.OpenStackDataPlaneDeployment,
+	secretsLastModified map[string]time.Time,
+) {
+	Log := r.GetLogger(ctx)
+
+	// Check if this deployment was created after the secret change
+	deploymentTime := deployment.CreationTimestamp.Time
+	for _, secretModTime := range secretsLastModified {
+		if deploymentTime.Before(secretModTime) {
+			// This deployment was before the secret change, don't track it
+			return
+		}
+	}
+
+	// Get all nodes in the nodeset
+	allNodeNames := r.getAllNodeNamesFromNodeset(instance)
+	if len(allNodeNames) == 0 {
+		return
+	}
+
+	// Determine which nodes were covered by this deployment
+	coveredNodes := r.getNodesCoveredByDeployment(deployment, allNodeNames)
+	if len(coveredNodes) == 0 {
+		return
+	}
+
+	// Add newly covered nodes to the status
+	existingCoverage := make(map[string]bool)
+	for _, nodeName := range instance.Status.UpdatedNodesAfterSecretChange {
+		existingCoverage[nodeName] = true
+	}
+
+	newlyAdded := 0
+	for _, nodeName := range coveredNodes {
+		if !existingCoverage[nodeName] {
+			instance.Status.UpdatedNodesAfterSecretChange = append(
+				instance.Status.UpdatedNodesAfterSecretChange,
+				nodeName,
+			)
+			existingCoverage[nodeName] = true
+			newlyAdded++
+		}
+	}
+
+	if newlyAdded > 0 {
+		Log.Info("Updated node coverage tracking",
+			"deployment", deployment.Name,
+			"newlyAdded", newlyAdded,
+			"totalCovered", len(instance.Status.UpdatedNodesAfterSecretChange),
+			"totalNodes", len(allNodeNames))
+	}
+}
+
+// allNodesetsUsingClusterUpdated checks if all nodesets using the same RabbitMQ cluster
+// have been fully updated (deployed without AnsibleLimit) after the secret was modified.
+// This ensures we don't remove the finalizer from the old RabbitMQUser until ALL nodesets
+// that might be using it have been updated to the new configuration.
+func (r *OpenStackDataPlaneNodeSetReconciler) allNodesetsUsingClusterUpdated(
+	ctx context.Context,
+	helper *helper.Helper,
+	currentNodeset *dataplanev1.OpenStackDataPlaneNodeSet,
+	secretsLastModified map[string]time.Time,
+) (bool, error) {
+	Log := r.GetLogger(ctx)
+
+	// Get all cell names from nova-cellX-compute-config secrets
+	cellNames, err := deployment.GetNovaComputeConfigCellNames(ctx, helper, currentNodeset.Namespace)
+	if err != nil {
+		return false, fmt.Errorf("failed to get nova cell names: %w", err)
+	}
+
+	if len(cellNames) == 0 {
+		// No cells found, nothing to check
+		return true, nil
+	}
+
+	// Collect all RabbitMQ clusters used by this nodeset
+	clustersUsedByCurrentNodeset := make(map[string]bool)
+	for _, cellName := range cellNames {
+		cluster, err := deployment.GetRabbitMQClusterForCell(ctx, helper, currentNodeset.Namespace, cellName)
+		if err != nil {
+			Log.Info("Failed to get RabbitMQ cluster for cell", "cell", cellName, "error", err)
+			continue
+		}
+		if cluster != "" {
+			clustersUsedByCurrentNodeset[cluster] = true
+		}
+	}
+
+	if len(clustersUsedByCurrentNodeset) == 0 {
+		// No clusters identified, proceed cautiously
+		return true, nil
+	}
+
+	// Get all nodesets in the namespace
+	nodesetList := &dataplanev1.OpenStackDataPlaneNodeSetList{}
+	err = r.List(ctx, nodesetList, client.InNamespace(currentNodeset.Namespace))
+	if err != nil {
+		return false, fmt.Errorf("failed to list nodesets: %w", err)
+	}
+
+	// Check each nodeset that might be using the same cluster
+	for _, nodeset := range nodesetList.Items {
+		// Check if this nodeset uses any of the same clusters
+		usesSharedCluster := false
+		for _, cellName := range cellNames {
+			cluster, err := deployment.GetRabbitMQClusterForCell(ctx, helper, nodeset.Namespace, cellName)
+			if err != nil {
+				continue
+			}
+			if clustersUsedByCurrentNodeset[cluster] {
+				usesSharedCluster = true
+				break
+			}
+		}
+
+		if !usesSharedCluster {
+			// This nodeset doesn't use the same cluster, skip it
+			continue
+		}
+
+		// This nodeset uses the same cluster, check if it's been updated
+		nodesetUpdated, err := r.isNodesetFullyUpdated(ctx, helper, &nodeset, secretsLastModified)
+		if err != nil {
+			Log.Error(err, "Failed to check if nodeset is fully updated", "nodeset", nodeset.Name)
+			return false, err
+		}
+
+		if !nodesetUpdated {
+			Log.Info("Nodeset using same RabbitMQ cluster has not been fully updated yet",
+				"nodeset", nodeset.Name,
+				"currentNodeset", currentNodeset.Name)
+			return false, nil
+		}
+	}
+
+	// All nodesets using the same cluster have been updated
+	return true, nil
+}
+
+// isNodesetFullyUpdated checks if all nodes in a nodeset have been successfully deployed
+// after the secrets were last modified. This uses the persisted status field as the
+// primary source of truth, which survives pod restarts and deployment deletions.
+func (r *OpenStackDataPlaneNodeSetReconciler) isNodesetFullyUpdated(
+	ctx context.Context,
+	helper *helper.Helper,
+	nodeset *dataplanev1.OpenStackDataPlaneNodeSet,
+	secretsLastModified map[string]time.Time,
+) (bool, error) {
+	Log := r.GetLogger(ctx)
+
+	// Get all node names/hostnames from the nodeset
+	allNodeNames := r.getAllNodeNamesFromNodeset(nodeset)
+	if len(allNodeNames) == 0 {
+		// No nodes defined in nodeset, consider it updated
+		return true, nil
+	}
+
+	// Use the persisted status as the source of truth for node coverage
+	// This survives pod restarts and deployment deletions
+	coveredNodes := make(map[string]bool)
+	for _, nodeName := range nodeset.Status.UpdatedNodesAfterSecretChange {
+		coveredNodes[nodeName] = true
+	}
+
+	// Check if all nodes are covered
+	uncoveredNodes := make([]string, 0)
+	for _, nodeName := range allNodeNames {
+		if !coveredNodes[nodeName] {
+			uncoveredNodes = append(uncoveredNodes, nodeName)
+		}
+	}
+
+	if len(uncoveredNodes) > 0 {
+		Log.Info("Not all nodes have been updated yet",
+			"nodeset", nodeset.Name,
+			"coveredNodes", len(coveredNodes),
+			"totalNodes", len(allNodeNames),
+			"uncoveredCount", len(uncoveredNodes),
+			"exampleUncovered", uncoveredNodes[0])
+		return false, nil
+	}
+
+	Log.Info("All nodes in nodeset have been successfully updated",
+		"nodeset", nodeset.Name,
+		"totalNodes", len(allNodeNames),
+		"coveredNodes", len(coveredNodes))
+	return true, nil
+}
+
+// getAllNodeNamesFromNodeset extracts all node names and hostnames from a nodeset
+func (r *OpenStackDataPlaneNodeSetReconciler) getAllNodeNamesFromNodeset(
+	nodeset *dataplanev1.OpenStackDataPlaneNodeSet,
+) []string {
+	nodeNames := make([]string, 0, len(nodeset.Spec.Nodes))
+
+	for nodeName, nodeSpec := range nodeset.Spec.Nodes {
+		// Add the node name from the map key
+		nodeNames = append(nodeNames, nodeName)
+
+		// Also add the hostname if it's different
+		if nodeSpec.HostName != "" && nodeSpec.HostName != nodeName {
+			nodeNames = append(nodeNames, nodeSpec.HostName)
+		}
+
+		// Also add ansible_host if specified
+		if nodeSpec.Ansible.AnsibleHost != "" &&
+			nodeSpec.Ansible.AnsibleHost != nodeName &&
+			nodeSpec.Ansible.AnsibleHost != nodeSpec.HostName {
+			nodeNames = append(nodeNames, nodeSpec.Ansible.AnsibleHost)
+		}
+	}
+
+	return nodeNames
+}
+
+// getNodesCoveredByDeployment determines which nodes were covered by a deployment
+// based on its AnsibleLimit setting
+func (r *OpenStackDataPlaneNodeSetReconciler) getNodesCoveredByDeployment(
+	deployment *dataplanev1.OpenStackDataPlaneDeployment,
+	allNodes []string,
+) []string {
+	ansibleLimit := strings.TrimSpace(deployment.Spec.AnsibleLimit)
+
+	// If no AnsibleLimit or it's "*", all nodes are covered
+	if ansibleLimit == "" || ansibleLimit == "*" {
+		return allNodes
+	}
+
+	// Parse AnsibleLimit to find covered nodes
+	// AnsibleLimit can be a comma-separated list of node names, patterns, or groups
+	limitParts := strings.Split(ansibleLimit, ",")
+
+	coveredNodes := make([]string, 0)
+	for _, node := range allNodes {
+		if r.nodeMatchesAnsibleLimit(node, limitParts) {
+			coveredNodes = append(coveredNodes, node)
+		}
+	}
+
+	return coveredNodes
+}
+
+// nodeMatchesAnsibleLimit checks if a node matches any pattern in the AnsibleLimit
+func (r *OpenStackDataPlaneNodeSetReconciler) nodeMatchesAnsibleLimit(
+	nodeName string,
+	limitParts []string,
+) bool {
+	for _, part := range limitParts {
+		part = strings.TrimSpace(part)
+
+		// Exact match
+		if part == nodeName {
+			return true
+		}
+
+		// Simple wildcard matching (* at the end)
+		// e.g., "compute-*" matches "compute-0", "compute-1", etc.
+		if strings.HasSuffix(part, "*") {
+			prefix := strings.TrimSuffix(part, "*")
+			if strings.HasPrefix(nodeName, prefix) {
+				return true
+			}
+		}
+
+		// Simple wildcard matching (* at the beginning)
+		// e.g., "*-0" matches "compute-0", "controller-0", etc.
+		if strings.HasPrefix(part, "*") {
+			suffix := strings.TrimPrefix(part, "*")
+			if strings.HasSuffix(nodeName, suffix) {
+				return true
+			}
+		}
+
+		// TODO: More complex Ansible patterns could be supported here
+		// For now, we handle the most common cases (exact match and simple wildcards)
+	}
+
+	return false
+}
+
 // manageRabbitMqUserFinalizers manages finalizers on RabbitMqUser CRs using a finalizer-only approach
 // This function:
 // 1. Gets cell names from nova-cellX-compute-config secrets
@@ -714,7 +1015,6 @@ func (r *OpenStackDataPlaneNodeSetReconciler) manageRabbitMqUserFinalizers(
 	ctx context.Context,
 	helper *helper.Helper,
 	instance *dataplanev1.OpenStackDataPlaneNodeSet,
-	secretsLastModified map[string]time.Time,
 ) error {
 	Log := r.GetLogger(ctx)
 

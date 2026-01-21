@@ -160,6 +160,16 @@ type OpenStackDataPlaneNodeSetStatus struct {
 
 	//DeployedBmhHash - Hash of BMHs deployed
 	DeployedBmhHash string `json:"deployedBmhHash,omitempty"`
+
+	// NovaCellSecretHash - Hash of nova-cellX-compute-config secrets to detect changes.
+	// When this hash changes, UpdatedNodesAfterSecretChange is reset.
+	NovaCellSecretHash string `json:"novaCellSecretHash,omitempty"`
+
+	// UpdatedNodesAfterSecretChange - List of node names that have been successfully
+	// updated after the most recent nova cell secret change. This is used to track
+	// progress across multiple AnsibleLimit deployments and ensure all nodes are
+	// updated before removing RabbitMQ user finalizers.
+	UpdatedNodesAfterSecretChange []string `json:"updatedNodesAfterSecretChange,omitempty" optional:"true"`
 }
 
 // +kubebuilder:object:root=true
