@@ -894,7 +894,14 @@ func (r *OpenStackDataPlaneNodeSetReconciler) allNodesetsUsingClusterUpdated(
 		}
 
 		// This nodeset uses the same cluster, check if it's been updated
-		nodesetUpdated, err := r.isNodesetFullyUpdated(ctx, helper, &nodeset, secretsLastModified)
+		// IMPORTANT: If this is the current nodeset, use the in-memory version
+		// to avoid stale data (status may have been updated but not written to cluster yet)
+		nodesetToCheck := &nodeset
+		if nodeset.Name == currentNodeset.Name && nodeset.Namespace == currentNodeset.Namespace {
+			nodesetToCheck = currentNodeset
+		}
+
+		nodesetUpdated, err := r.isNodesetFullyUpdated(ctx, helper, nodesetToCheck, secretsLastModified)
 		if err != nil {
 			Log.Error(err, "Failed to check if nodeset is fully updated", "nodeset", nodeset.Name)
 			return false, err
