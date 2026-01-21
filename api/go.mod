@@ -146,30 +146,30 @@ replace sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.19.7
 
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.1.2-0.20241127223932-88edb96860cf //allow-merging
 
-replace github.com/openstack-k8s-operators/barbican-operator/api => github.com/lmiccini/barbican-operator/api v0.0.0-20260120123237-3faa58296167
+replace github.com/openstack-k8s-operators/barbican-operator/api => github.com/lmiccini/barbican-operator/api v0.0.0-20260121123356-fe54e3f5c518
 
-replace github.com/openstack-k8s-operators/cinder-operator/api => github.com/lmiccini/cinder-operator/api v0.0.0-20260120124039-6e76c6428653
+replace github.com/openstack-k8s-operators/cinder-operator/api => github.com/lmiccini/cinder-operator/api v0.0.0-20260121123124-4f27fb0f08cc
 
-replace github.com/openstack-k8s-operators/designate-operator/api => github.com/lmiccini/designate-operator/api v0.0.0-20260120123323-9788b31c9033
+replace github.com/openstack-k8s-operators/designate-operator/api => github.com/lmiccini/designate-operator/api v0.0.0-20260121061057-d174946ef4fb
 
-replace github.com/openstack-k8s-operators/glance-operator/api => github.com/lmiccini/glance-operator/api v0.0.0-20260120123348-acecbfe9d482
+replace github.com/openstack-k8s-operators/glance-operator/api => github.com/lmiccini/glance-operator/api v0.0.0-20260121061242-8abd52e7c7fd
 
-replace github.com/openstack-k8s-operators/heat-operator/api => github.com/lmiccini/heat-operator/api v0.0.0-20260120123414-482b35367316
+replace github.com/openstack-k8s-operators/heat-operator/api => github.com/lmiccini/heat-operator/api v0.0.0-20260121102503-b54e8783a959
 
-replace github.com/openstack-k8s-operators/ironic-operator/api => github.com/lmiccini/ironic-operator/api v0.0.0-20260120123850-36d6cd7075db
+replace github.com/openstack-k8s-operators/ironic-operator/api => github.com/lmiccini/ironic-operator/api v0.0.0-20260121102629-b16a82f20a67
 
-replace github.com/openstack-k8s-operators/keystone-operator/api => github.com/lmiccini/keystone-operator/api v0.0.0-20260120122959-b4b72b11b2bc
+replace github.com/openstack-k8s-operators/keystone-operator/api => github.com/lmiccini/keystone-operator/api v0.0.0-20260121061457-c22a0a328523
 
-replace github.com/openstack-k8s-operators/manila-operator/api => github.com/lmiccini/manila-operator/api v0.0.0-20260120124229-5725eba75240
+replace github.com/openstack-k8s-operators/manila-operator/api => github.com/lmiccini/manila-operator/api v0.0.0-20260121123801-e69744013a89
 
-replace github.com/openstack-k8s-operators/neutron-operator/api => github.com/lmiccini/neutron-operator/api v0.0.0-20260120124239-a0366eacebec
+replace github.com/openstack-k8s-operators/neutron-operator/api => github.com/lmiccini/neutron-operator/api v0.0.0-20260121061919-259bfb1c8a3b
 
 replace github.com/openstack-k8s-operators/nova-operator/api => github.com/lmiccini/nova-operator/api v0.0.0-20260120124030-4cdaa8939ae8
 
-replace github.com/openstack-k8s-operators/octavia-operator/api => github.com/lmiccini/octavia-operator/api v0.0.0-20260120124444-32d33e309a9a
+replace github.com/openstack-k8s-operators/octavia-operator/api => github.com/lmiccini/octavia-operator/api v0.0.0-20260121061928-e5eab69d2ed3
 
-replace github.com/openstack-k8s-operators/telemetry-operator/api => github.com/lmiccini/telemetry-operator/api v0.0.0-20260120124324-adbdc4ba3f89
+replace github.com/openstack-k8s-operators/telemetry-operator/api => github.com/lmiccini/telemetry-operator/api v0.0.0-20260121123528-fe7d76072506
 
 replace github.com/openstack-k8s-operators/watcher-operator/api => github.com/lmiccini/watcher-operator/api v0.0.0-20260120151615-111af6c57cd1
 
-replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20260120164304-31f7c6a39e7e
+replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20260121114428-7834e80b0211
