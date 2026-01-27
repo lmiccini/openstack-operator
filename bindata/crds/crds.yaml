@@ -5064,6 +5064,16 @@ spec:
                       databaseInstance:
                         default: openstack
                         type: string
+                      dbPurge:
+                        properties:
+                          age:
+                            default: 30
+                            minimum: 1
+                            type: integer
+                          schedule:
+                            default: 1 0 * * *
+                            type: string
+                        type: object
                       defaultConfigOverwrite:
                         additionalProperties:
                           type: string
@@ -15194,18 +15204,6 @@ spec:
                               memcachedInstance:
                                 default: memcached
                                 type: string
-                              messagingBus:
-                                properties:
-                                  cluster:
-                                    minLength: 1
-                                    type: string
-                                  user:
-                                    type: string
-                                  vhost:
-                                    type: string
-                                required:
-                                - cluster
-                                type: object
                               networkAttachmentDefinitions:
                                 items:
                                   type: string
@@ -15389,18 +15387,6 @@ spec:
                                 type: string
                               secretName:
                                 type: string
-                            type: object
-                          messagingBus:
-                            properties:
-                              cluster:
-                                minLength: 1
-                                type: string
-                              user:
-                                type: string
-                              vhost:
-                                type: string
-                            required:
-                            - cluster
                             type: object
                           mysqldExporterDatabaseAccountPrefix:
                             default: mysqld-exporter
