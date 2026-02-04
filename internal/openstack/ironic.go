@@ -47,6 +47,10 @@ func ReconcileIronic(ctx context.Context, instance *corev1beta1.OpenStackControl
 		instance.Spec.Ironic.Template = &ironicv1.IronicSpecCore{}
 	}
 
+	// Note: Migration from rabbitMqClusterName to messagingBus.cluster is handled by the webhook
+	// via annotation-based triggers. No direct spec mutation here to avoid GitOps conflicts.
+	// This applies to both Ironic main template and IronicNeutronAgent.
+
 	if instance.Spec.Ironic.Template.NodeSelector == nil {
 		instance.Spec.Ironic.Template.NodeSelector = &instance.Spec.NodeSelector
 	}

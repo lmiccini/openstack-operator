@@ -48,6 +48,9 @@ func ReconcileDesignate(ctx context.Context, instance *corev1beta1.OpenStackCont
 		instance.Spec.Designate.Template = &designatev1.DesignateSpecCore{}
 	}
 
+	// Note: Migration from rabbitMqClusterName to messagingBus.cluster is handled by the webhook
+	// via annotation-based triggers. No direct spec mutation here to avoid GitOps conflicts.
+
 	// add selector to service overrides
 	for _, endpointType := range []service.Endpoint{service.EndpointPublic, service.EndpointInternal} {
 		if instance.Spec.Designate.Template.DesignateAPI.Override.Service == nil {
@@ -120,6 +123,12 @@ func ReconcileDesignate(ctx context.Context, instance *corev1beta1.OpenStackCont
 	// subCRs inherit the top-level TopologyRef unless an override is present
 	if instance.Spec.Designate.Template.TopologyRef == nil {
 		instance.Spec.Designate.Template.TopologyRef = instance.Spec.TopologyRef
+	}
+
+	// Propagate NotificationsBus from top-level to template if not set
+	// Template-level takes precedence over top-level
+	if instance.Spec.Designate.Template.NotificationsBus == nil {
+		instance.Spec.Designate.Template.NotificationsBus = instance.Spec.NotificationsBus
 	}
 
 	helper.GetLogger().Info("Reconciling Designate", "Designate.Namespace", instance.Namespace, "Designate.Name", "designate")
