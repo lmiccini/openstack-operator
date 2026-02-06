@@ -17,6 +17,7 @@ import (
 	swiftv1 "github.com/openstack-k8s-operators/swift-operator/api/v1beta1"
 	telemetryv1 "github.com/openstack-k8s-operators/telemetry-operator/api/v1beta1"
 	watcherv1 "github.com/openstack-k8s-operators/watcher-operator/api/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
@@ -445,10 +446,10 @@ var _ = Describe("OpenStackControlPlane Webhook", func() {
 			Expect(instance.Spec.Ironic.Template.IronicNeutronAgent.RabbitMqClusterName).To(Equal(""))
 		})
 
-		It("should inherit from parent service when IronicNeutronAgent deprecated field is empty", func() {
+		It("should only migrate IronicNeutronAgent when deprecated field is set", func() {
 			ironicTemplate := &ironicv1.IronicSpecCore{}
 			ironicTemplate.RabbitMqClusterName = "ironic-rmq"
-			// IronicNeutronAgent.RabbitMqClusterName is not set - should inherit from parent
+			ironicTemplate.IronicNeutronAgent.RabbitMqClusterName = "neutron-agent-rmq"
 			instance.Spec.Ironic.Template = ironicTemplate
 
 			instance.migrateDeprecatedFields()
@@ -456,47 +457,48 @@ var _ = Describe("OpenStackControlPlane Webhook", func() {
 			// Ironic migrated
 			Expect(instance.Spec.Ironic.Template.MessagingBus.Cluster).To(Equal("ironic-rmq"))
 
-			// IronicNeutronAgent inherited from parent (Ironic)
-			Expect(instance.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster).To(Equal("ironic-rmq"))
+			// IronicNeutronAgent migrated from its own deprecated field
+			Expect(instance.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster).To(Equal("neutron-agent-rmq"))
 		})
 
-		It("should inherit from top-level messagingBus when service deprecated field is empty", func() {
+		It("should NOT persist top-level messagingBus to service when service deprecated field is empty", func() {
 			instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
 				Cluster: "top-level-rmq",
 				Vhost:   "/custom",
 			}
 			cinderTemplate := &cinderv1.CinderSpecCore{}
-			// No RabbitMqClusterName set - should inherit from top-level
+			// No RabbitMqClusterName set - should NOT inherit in webhook
 			instance.Spec.Cinder.Template = cinderTemplate
 
 			instance.migrateDeprecatedFields()
 
-			Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("top-level-rmq"))
-			Expect(instance.Spec.Cinder.Template.MessagingBus.Vhost).To(Equal("/custom"))
+			// Service-level field should remain empty - inheritance happens at runtime
+			Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal(""))
 		})
 
-		It("should inherit from top-level notificationsBus for Keystone when deprecated field is empty", func() {
+		It("should NOT persist top-level notificationsBus to Keystone when deprecated field is empty", func() {
 			instance.Spec.NotificationsBus = &rabbitmqv1.RabbitMqConfig{
 				Cluster: "top-level-notifications",
 			}
 			keystoneTemplate := &keystonev1.KeystoneAPISpecCore{}
-			// No RabbitMqClusterName set - should inherit from top-level
+			// No RabbitMqClusterName set - should NOT inherit in webhook
 			instance.Spec.Keystone.Template = keystoneTemplate
 
 			instance.migrateDeprecatedFields()
 
-			Expect(instance.Spec.Keystone.Template.NotificationsBus).ToNot(BeNil())
-			Expect(instance.Spec.Keystone.Template.NotificationsBus.Cluster).To(Equal("top-level-notifications"))
+			// Service-level field should remain nil - inheritance happens at runtime
+			Expect(instance.Spec.Keystone.Template.NotificationsBus).To(BeNil())
 		})
 
-		It("should apply default 'rabbitmq' when no deprecated field and no top-level", func() {
+		It("should NOT apply default when no deprecated field is set", func() {
 			cinderTemplate := &cinderv1.CinderSpecCore{}
-			// No RabbitMqClusterName, no top-level - should default
+			// No RabbitMqClusterName, no top-level - should NOT set default in webhook
 			instance.Spec.Cinder.Template = cinderTemplate
 
 			instance.migrateDeprecatedFields()
 
-			Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("rabbitmq"))
+			// Service-level field should remain empty - defaults applied at runtime
+			Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal(""))
 		})
 
 		It("should NOT default notificationsBus (optional field)", func() {
@@ -583,7 +585,7 @@ var _ = Describe("OpenStackControlPlane Webhook", func() {
 			Expect(instance.Spec.Cinder.Template.NotificationsBusInstance).To(BeNil())
 		})
 
-		It("should inherit top-level notificationsBus when service-level is nil", func() {
+		It("should NOT persist top-level notificationsBus when service-level is nil", func() {
 			// Set top-level notificationsBus
 			instance.Spec.NotificationsBus = &rabbitmqv1.RabbitMqConfig{
 				Cluster: "top-level-notif",
@@ -595,9 +597,349 @@ var _ = Describe("OpenStackControlPlane Webhook", func() {
 
 			instance.migrateDeprecatedFields()
 
-			// Should inherit from top-level
-			Expect(instance.Spec.Cinder.Template.NotificationsBus).ToNot(BeNil())
-			Expect(instance.Spec.Cinder.Template.NotificationsBus.Cluster).To(Equal("top-level-notif"))
+			// Should NOT inherit in webhook - inheritance happens at runtime
+			Expect(instance.Spec.Cinder.Template.NotificationsBus).To(BeNil())
+		})
+	})
+
+	Context("Comprehensive migration and inheritance scenarios", func() {
+		var instance *OpenStackControlPlane
+
+		BeforeEach(func() {
+			instance = &OpenStackControlPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "test-namespace",
+				},
+				Spec: OpenStackControlPlaneSpec{},
+			}
+		})
+
+		Context("Scenario 1: Migration from deprecated fields", func() {
+			It("should migrate top-level notificationsBusInstance to notificationsBus", func() {
+				notifInstance := "top-notif-cluster"
+				instance.Spec.NotificationsBusInstance = &notifInstance
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.NotificationsBus.Cluster).To(Equal("top-notif-cluster"))
+				Expect(instance.Spec.NotificationsBusInstance).To(BeNil())
+			})
+
+			It("should migrate service-level rabbitMqClusterName to messagingBus.cluster", func() {
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.RabbitMqClusterName = "cinder-rabbit"
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("cinder-rabbit"))
+				Expect(instance.Spec.Cinder.Template.RabbitMqClusterName).To(Equal(""))
+			})
+
+			It("should migrate Nova API-level APIMessageBusInstance", func() {
+				novaTemplate := &novav1.NovaSpecCore{}
+				novaTemplate.APIMessageBusInstance = "nova-api-rabbit"
+				instance.Spec.Nova.Template = novaTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Nova.Template.MessagingBus.Cluster).To(Equal("nova-api-rabbit"))
+				Expect(instance.Spec.Nova.Template.APIMessageBusInstance).To(Equal(""))
+			})
+
+			It("should migrate Nova cell-level CellMessageBusInstance", func() {
+				novaTemplate := &novav1.NovaSpecCore{
+					CellTemplates: make(map[string]novav1.NovaCellTemplate),
+				}
+				novaTemplate.CellTemplates["cell1"] = novav1.NovaCellTemplate{
+					CellMessageBusInstance: "cell1-rabbit",
+				}
+				instance.Spec.Nova.Template = novaTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Nova.Template.CellTemplates["cell1"].MessagingBus.Cluster).To(Equal("cell1-rabbit"))
+				Expect(instance.Spec.Nova.Template.CellTemplates["cell1"].CellMessageBusInstance).To(Equal(""))
+			})
+
+			It("should migrate Telemetry CloudKitty rabbitMqClusterName", func() {
+				telemetryTemplate := &telemetryv1.TelemetrySpecCore{}
+				telemetryTemplate.CloudKitty.RabbitMqClusterName = "cloudkitty-rabbit"
+				instance.Spec.Telemetry.Template = telemetryTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster).To(Equal("cloudkitty-rabbit"))
+				Expect(instance.Spec.Telemetry.Template.CloudKitty.RabbitMqClusterName).To(Equal(""))
+			})
+
+			It("should migrate Ironic and IronicNeutronAgent separately", func() {
+				ironicTemplate := &ironicv1.IronicSpecCore{}
+				ironicTemplate.RabbitMqClusterName = "ironic-rabbit"
+				ironicTemplate.IronicNeutronAgent.RabbitMqClusterName = "neutron-agent-rabbit"
+				instance.Spec.Ironic.Template = ironicTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Ironic.Template.MessagingBus.Cluster).To(Equal("ironic-rabbit"))
+				Expect(instance.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster).To(Equal("neutron-agent-rabbit"))
+			})
+		})
+
+		Context("Scenario 2: Top-level parameters without deprecated fields", func() {
+			It("should NOT persist top-level messagingBus to service-level in webhook", func() {
+				instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-rabbit",
+					Vhost:   "/global",
+				}
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Webhook should NOT persist the inheritance
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal(""))
+			})
+
+			It("should NOT persist top-level notificationsBus to service-level in webhook", func() {
+				instance.Spec.NotificationsBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-notif",
+				}
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Webhook should NOT persist the inheritance
+				Expect(instance.Spec.Cinder.Template.NotificationsBus).To(BeNil())
+			})
+
+			It("should NOT persist top-level messagingBus to Nova cells in webhook", func() {
+				instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-rabbit",
+				}
+				novaTemplate := &novav1.NovaSpecCore{
+					CellTemplates: make(map[string]novav1.NovaCellTemplate),
+				}
+				novaTemplate.CellTemplates["cell0"] = novav1.NovaCellTemplate{}
+				novaTemplate.CellTemplates["cell1"] = novav1.NovaCellTemplate{}
+				instance.Spec.Nova.Template = novaTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Webhook should NOT persist the inheritance to cells
+				Expect(instance.Spec.Nova.Template.MessagingBus.Cluster).To(Equal(""))
+				Expect(instance.Spec.Nova.Template.CellTemplates["cell0"].MessagingBus.Cluster).To(Equal(""))
+				Expect(instance.Spec.Nova.Template.CellTemplates["cell1"].MessagingBus.Cluster).To(Equal(""))
+			})
+		})
+
+		Context("Scenario 3: Top-level with per-service overrides", func() {
+			It("should migrate deprecated field and ignore top-level when service has deprecated field", func() {
+				instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-rabbit",
+				}
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.RabbitMqClusterName = "cinder-specific-rabbit"
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Service-level deprecated field takes precedence
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("cinder-specific-rabbit"))
+				Expect(instance.Spec.Cinder.Template.RabbitMqClusterName).To(Equal(""))
+			})
+
+			It("should preserve explicit service-level messagingBus when it exists", func() {
+				instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-rabbit",
+				}
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.MessagingBus = rabbitmqv1.RabbitMqConfig{
+					Cluster: "cinder-explicit",
+					Vhost:   "/cinder",
+				}
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Explicit service-level should be preserved
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("cinder-explicit"))
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Vhost).To(Equal("/cinder"))
+			})
+
+			It("should handle mixed scenario: some services with deprecated, some without", func() {
+				instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-rabbit",
+				}
+
+				// Cinder has deprecated field
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.RabbitMqClusterName = "cinder-rabbit"
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				// Manila has no deprecated field
+				manilaTemplate := &manilav1.ManilaSpecCore{}
+				instance.Spec.Manila.Template = manilaTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Cinder should migrate from deprecated field
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("cinder-rabbit"))
+
+				// Manila should remain empty (inheritance happens at runtime, not in webhook)
+				Expect(instance.Spec.Manila.Template.MessagingBus.Cluster).To(Equal(""))
+			})
+
+			It("should handle Nova with top-level, API-level deprecated, and cell-level explicit", func() {
+				instance.Spec.MessagingBus = &rabbitmqv1.RabbitMqConfig{
+					Cluster: "global-rabbit",
+				}
+
+				novaTemplate := &novav1.NovaSpecCore{
+					APIMessageBusInstance: "nova-api-rabbit",
+					CellTemplates:         make(map[string]novav1.NovaCellTemplate),
+				}
+				// cell0 with deprecated field
+				novaTemplate.CellTemplates["cell0"] = novav1.NovaCellTemplate{
+					CellMessageBusInstance: "cell0-rabbit",
+				}
+				// cell1 with explicit messagingBus
+				novaTemplate.CellTemplates["cell1"] = novav1.NovaCellTemplate{
+					MessagingBus: rabbitmqv1.RabbitMqConfig{
+						Cluster: "cell1-explicit",
+					},
+				}
+				instance.Spec.Nova.Template = novaTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// API-level should migrate
+				Expect(instance.Spec.Nova.Template.MessagingBus.Cluster).To(Equal("nova-api-rabbit"))
+				// cell0 should migrate from deprecated field
+				Expect(instance.Spec.Nova.Template.CellTemplates["cell0"].MessagingBus.Cluster).To(Equal("cell0-rabbit"))
+				// cell1 should keep explicit value
+				Expect(instance.Spec.Nova.Template.CellTemplates["cell1"].MessagingBus.Cluster).To(Equal("cell1-explicit"))
+			})
+		})
+
+		Context("Scenario 4: NotificationsBus-specific services", func() {
+			It("should migrate Keystone rabbitMqClusterName to notificationsBus", func() {
+				keystoneTemplate := &keystonev1.KeystoneAPISpecCore{}
+				keystoneTemplate.RabbitMqClusterName = "keystone-rabbit"
+				instance.Spec.Keystone.Template = keystoneTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Keystone.Template.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.Keystone.Template.NotificationsBus.Cluster).To(Equal("keystone-rabbit"))
+				Expect(instance.Spec.Keystone.Template.RabbitMqClusterName).To(Equal(""))
+			})
+
+			It("should migrate Swift SwiftProxy rabbitMqClusterName to notificationsBus", func() {
+				swiftTemplate := &swiftv1.SwiftSpecCore{}
+				swiftTemplate.SwiftProxy.RabbitMqClusterName = "swift-rabbit"
+				instance.Spec.Swift.Template = swiftTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Swift.Template.SwiftProxy.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.Swift.Template.SwiftProxy.NotificationsBus.Cluster).To(Equal("swift-rabbit"))
+				Expect(instance.Spec.Swift.Template.SwiftProxy.RabbitMqClusterName).To(Equal(""))
+			})
+
+			It("should migrate Telemetry Aodh and Ceilometer rabbitMqClusterName", func() {
+				telemetryTemplate := &telemetryv1.TelemetrySpecCore{}
+				telemetryTemplate.Autoscaling.Aodh.RabbitMqClusterName = "aodh-rabbit"
+				telemetryTemplate.Ceilometer.RabbitMqClusterName = "ceilometer-rabbit"
+				instance.Spec.Telemetry.Template = telemetryTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Telemetry.Template.Autoscaling.Aodh.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.Telemetry.Template.Autoscaling.Aodh.NotificationsBus.Cluster).To(Equal("aodh-rabbit"))
+				Expect(instance.Spec.Telemetry.Template.Ceilometer.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.Telemetry.Template.Ceilometer.NotificationsBus.Cluster).To(Equal("ceilometer-rabbit"))
+			})
+		})
+
+		Context("Scenario 5: Services with both MessagingBus and NotificationsBus", func() {
+			It("should migrate both rabbitMqClusterName and notificationsBusInstance for Cinder", func() {
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.RabbitMqClusterName = "cinder-rpc-rabbit"
+				notifInstance := "cinder-notif-rabbit"
+				cinderTemplate.NotificationsBusInstance = &notifInstance
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("cinder-rpc-rabbit"))
+				Expect(instance.Spec.Cinder.Template.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.Cinder.Template.NotificationsBus.Cluster).To(Equal("cinder-notif-rabbit"))
+				Expect(instance.Spec.Cinder.Template.RabbitMqClusterName).To(Equal(""))
+				Expect(instance.Spec.Cinder.Template.NotificationsBusInstance).To(BeNil())
+			})
+
+			It("should handle Watcher with pointer-type RabbitMqClusterName", func() {
+				watcherTemplate := &watcherv1.WatcherSpecCore{}
+				rabbitCluster := "watcher-rabbit"
+				watcherTemplate.RabbitMqClusterName = &rabbitCluster
+				notifInstance := "watcher-notif"
+				watcherTemplate.NotificationsBusInstance = &notifInstance
+				instance.Spec.Watcher.Template = watcherTemplate
+
+				instance.migrateDeprecatedFields()
+
+				Expect(instance.Spec.Watcher.Template.MessagingBus.Cluster).To(Equal("watcher-rabbit"))
+				Expect(instance.Spec.Watcher.Template.NotificationsBus).ToNot(BeNil())
+				Expect(instance.Spec.Watcher.Template.NotificationsBus.Cluster).To(Equal("watcher-notif"))
+				Expect(instance.Spec.Watcher.Template.RabbitMqClusterName).To(BeNil())
+				Expect(instance.Spec.Watcher.Template.NotificationsBusInstance).To(BeNil())
+			})
+		})
+
+		Context("Scenario 6: Edge cases", func() {
+			It("should not overwrite existing new field when migrating deprecated field", func() {
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.RabbitMqClusterName = "old-cinder-rabbit"
+				cinderTemplate.MessagingBus = rabbitmqv1.RabbitMqConfig{
+					Cluster: "new-cinder-rabbit",
+					Vhost:   "/cinder",
+				}
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Should keep the new field value, not overwrite with deprecated
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal("new-cinder-rabbit"))
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Vhost).To(Equal("/cinder"))
+				// Deprecated field should still be cleared
+				Expect(instance.Spec.Cinder.Template.RabbitMqClusterName).To(Equal(""))
+			})
+
+			It("should handle empty string deprecated field gracefully", func() {
+				cinderTemplate := &cinderv1.CinderSpecCore{}
+				cinderTemplate.RabbitMqClusterName = ""
+				instance.Spec.Cinder.Template = cinderTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Should not migrate empty string
+				Expect(instance.Spec.Cinder.Template.MessagingBus.Cluster).To(Equal(""))
+			})
+
+			It("should handle nil deprecated pointer field gracefully", func() {
+				watcherTemplate := &watcherv1.WatcherSpecCore{}
+				watcherTemplate.RabbitMqClusterName = nil
+				instance.Spec.Watcher.Template = watcherTemplate
+
+				instance.migrateDeprecatedFields()
+
+				// Should not panic, messagingBus should remain empty
+				Expect(instance.Spec.Watcher.Template.MessagingBus.Cluster).To(Equal(""))
+			})
 		})
 	})
 })

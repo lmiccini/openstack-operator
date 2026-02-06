@@ -81,6 +81,28 @@ func ReconcileNova(ctx context.Context, instance *corev1beta1.OpenStackControlPl
 		instance.Spec.Nova.Template.NotificationsBus = instance.Spec.NotificationsBus
 	}
 
+	// Propagate MessagingBus from top-level to template if not set (for Nova API)
+	// Template-level takes precedence over top-level
+	if instance.Spec.Nova.Template.MessagingBus.Cluster == "" {
+		if instance.Spec.MessagingBus != nil && instance.Spec.MessagingBus.Cluster != "" {
+			instance.Spec.Nova.Template.MessagingBus = *instance.Spec.MessagingBus
+		}
+	}
+
+	// Propagate MessagingBus to cell0 only if not set
+	// Cell0 is special (handles failed scheduling) and inherits from Nova API-level
+	// Other cells (cell1+) should be explicitly configured for isolation
+	if instance.Spec.Nova.Template.CellTemplates != nil {
+		if cell0Template, exists := instance.Spec.Nova.Template.CellTemplates["cell0"]; exists {
+			if cell0Template.MessagingBus.Cluster == "" {
+				if instance.Spec.Nova.Template.MessagingBus.Cluster != "" {
+					cell0Template.MessagingBus = instance.Spec.Nova.Template.MessagingBus
+					instance.Spec.Nova.Template.CellTemplates["cell0"] = cell0Template
+				}
+			}
+		}
+	}
+
 	// When there's no Topology referenced in the Service Template, inject the
 	// top-level one
 	// NOTE: This does not check the Service subCRs: by default the generated

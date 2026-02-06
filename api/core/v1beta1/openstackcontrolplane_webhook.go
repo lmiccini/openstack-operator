@@ -1492,18 +1492,12 @@ func (r *OpenStackControlPlane) migrateDeprecatedFields() {
 			"ironic",
 		)
 
-		// IronicNeutronAgent has its own messaging bus
-		if r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster == "" {
-			if r.Spec.Ironic.Template.IronicNeutronAgent.RabbitMqClusterName != "" {
-				r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster = r.Spec.Ironic.Template.IronicNeutronAgent.RabbitMqClusterName
-				openstackcontrolplanelog.Info("Migrated ironic neutron agent rabbitMqClusterName to messagingBus.cluster",
-					"instance", r.Name,
-					"cluster", r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster)
-			} else if r.Spec.Ironic.Template.MessagingBus.Cluster != "" {
-				r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus = r.Spec.Ironic.Template.MessagingBus
-			} else {
-				r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster = "rabbitmq"
-			}
+		// IronicNeutronAgent has its own messaging bus - only migrate from deprecated field
+		if r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster == "" && r.Spec.Ironic.Template.IronicNeutronAgent.RabbitMqClusterName != "" {
+			r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster = r.Spec.Ironic.Template.IronicNeutronAgent.RabbitMqClusterName
+			openstackcontrolplanelog.Info("Migrated ironic neutron agent rabbitMqClusterName to messagingBus.cluster",
+				"instance", r.Name,
+				"cluster", r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster)
 		}
 		if r.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster != "" {
 			r.Spec.Ironic.Template.IronicNeutronAgent.RabbitMqClusterName = ""
@@ -1577,21 +1571,12 @@ func (r *OpenStackControlPlane) migrateDeprecatedFields() {
 
 	// Nova - has API-level and per-cell messaging bus fields
 	if r.Spec.Nova.Template != nil {
-		// API-level migration
-		if r.Spec.Nova.Template.MessagingBus.Cluster == "" {
-			if r.Spec.Nova.Template.APIMessageBusInstance != "" {
-				r.Spec.Nova.Template.MessagingBus.Cluster = r.Spec.Nova.Template.APIMessageBusInstance
-				openstackcontrolplanelog.Info("Migrated nova APIMessageBusInstance to messagingBus.cluster",
-					"instance", r.Name,
-					"cluster", r.Spec.Nova.Template.MessagingBus.Cluster)
-			} else if r.Spec.MessagingBus != nil && r.Spec.MessagingBus.Cluster != "" {
-				r.Spec.Nova.Template.MessagingBus = *r.Spec.MessagingBus
-				openstackcontrolplanelog.Info("Inherited top-level messagingBus for nova",
-					"instance", r.Name,
-					"cluster", r.Spec.Nova.Template.MessagingBus.Cluster)
-			} else {
-				r.Spec.Nova.Template.MessagingBus.Cluster = "rabbitmq"
-			}
+		// API-level migration - only migrate from deprecated field
+		if r.Spec.Nova.Template.MessagingBus.Cluster == "" && r.Spec.Nova.Template.APIMessageBusInstance != "" {
+			r.Spec.Nova.Template.MessagingBus.Cluster = r.Spec.Nova.Template.APIMessageBusInstance
+			openstackcontrolplanelog.Info("Migrated nova APIMessageBusInstance to messagingBus.cluster",
+				"instance", r.Name,
+				"cluster", r.Spec.Nova.Template.MessagingBus.Cluster)
 		}
 
 		// Clear deprecated field after migration
@@ -1599,25 +1584,15 @@ func (r *OpenStackControlPlane) migrateDeprecatedFields() {
 			r.Spec.Nova.Template.APIMessageBusInstance = ""
 		}
 
-		// Per-cell migration
+		// Per-cell migration - only migrate from deprecated field
 		if r.Spec.Nova.Template.CellTemplates != nil {
 			for cellName, cellTemplate := range r.Spec.Nova.Template.CellTemplates {
-				if cellTemplate.MessagingBus.Cluster == "" {
-					if cellTemplate.CellMessageBusInstance != "" {
-						cellTemplate.MessagingBus.Cluster = cellTemplate.CellMessageBusInstance
-						openstackcontrolplanelog.Info("Migrated nova cell cellMessageBusInstance to messagingBus.cluster",
-							"instance", r.Name,
-							"cell", cellName,
-							"cluster", cellTemplate.MessagingBus.Cluster)
-					} else if r.Spec.Nova.Template.MessagingBus.Cluster != "" {
-						cellTemplate.MessagingBus = r.Spec.Nova.Template.MessagingBus
-						openstackcontrolplanelog.Info("Inherited nova API-level messagingBus for cell",
-							"instance", r.Name,
-							"cell", cellName,
-							"cluster", cellTemplate.MessagingBus.Cluster)
-					} else {
-						cellTemplate.MessagingBus.Cluster = "rabbitmq"
-					}
+				if cellTemplate.MessagingBus.Cluster == "" && cellTemplate.CellMessageBusInstance != "" {
+					cellTemplate.MessagingBus.Cluster = cellTemplate.CellMessageBusInstance
+					openstackcontrolplanelog.Info("Migrated nova cell cellMessageBusInstance to messagingBus.cluster",
+						"instance", r.Name,
+						"cell", cellName,
+						"cluster", cellTemplate.MessagingBus.Cluster)
 				}
 
 				// Clear deprecated field after migration
@@ -1640,18 +1615,12 @@ func (r *OpenStackControlPlane) migrateDeprecatedFields() {
 
 	// Telemetry - has multiple sub-services with different bus types
 	if r.Spec.Telemetry.Template != nil {
-		// CloudKitty uses MessagingBus
-		if r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster == "" {
-			if r.Spec.Telemetry.Template.CloudKitty.RabbitMqClusterName != "" {
-				r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster = r.Spec.Telemetry.Template.CloudKitty.RabbitMqClusterName
-				openstackcontrolplanelog.Info("Migrated telemetry cloudkitty rabbitMqClusterName to messagingBus.cluster",
-					"instance", r.Name,
-					"cluster", r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster)
-			} else if r.Spec.MessagingBus != nil && r.Spec.MessagingBus.Cluster != "" {
-				r.Spec.Telemetry.Template.CloudKitty.MessagingBus = *r.Spec.MessagingBus
-			} else {
-				r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster = "rabbitmq"
-			}
+		// CloudKitty uses MessagingBus - only migrate from deprecated field
+		if r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster == "" && r.Spec.Telemetry.Template.CloudKitty.RabbitMqClusterName != "" {
+			r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster = r.Spec.Telemetry.Template.CloudKitty.RabbitMqClusterName
+			openstackcontrolplanelog.Info("Migrated telemetry cloudkitty rabbitMqClusterName to messagingBus.cluster",
+				"instance", r.Name,
+				"cluster", r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster)
 		}
 		if r.Spec.Telemetry.Template.CloudKitty.MessagingBus.Cluster != "" {
 			r.Spec.Telemetry.Template.CloudKitty.RabbitMqClusterName = ""
@@ -1674,39 +1643,20 @@ func (r *OpenStackControlPlane) migrateDeprecatedFields() {
 }
 
 // migrateServiceMessagingBus migrates a service-level rabbitMqClusterName to messagingBus.cluster
-// Priority order:
-// 1. Service-level deprecated field (rabbitMqClusterName)
-// 2. Top-level MessagingBus
-// 3. Default value "rabbitmq"
+// Only handles migration from deprecated field to new field.
+// Inheritance from top-level and defaults are handled at runtime in service reconciliation.
 func (r *OpenStackControlPlane) migrateServiceMessagingBus(
 	serviceMessagingBus *rabbitmqv1.RabbitMqConfig,
 	deprecatedField *string,
 	serviceName string,
 ) {
-	// Only migrate if the new field is not already set
-	if serviceMessagingBus.Cluster == "" {
-		// Priority 1: Migrate from service-level deprecated field
-		if deprecatedField != nil && *deprecatedField != "" {
-			serviceMessagingBus.Cluster = *deprecatedField
-			openstackcontrolplanelog.Info("Migrated service rabbitMqClusterName to messagingBus.cluster",
-				"instance", r.Name,
-				"service", serviceName,
-				"cluster", serviceMessagingBus.Cluster)
-			// Priority 2: Inherit from top-level MessagingBus
-		} else if r.Spec.MessagingBus != nil && r.Spec.MessagingBus.Cluster != "" {
-			*serviceMessagingBus = *r.Spec.MessagingBus
-			openstackcontrolplanelog.Info("Inherited top-level messagingBus",
-				"instance", r.Name,
-				"service", serviceName,
-				"cluster", serviceMessagingBus.Cluster)
-			// Priority 3: Default to "rabbitmq"
-		} else {
-			serviceMessagingBus.Cluster = "rabbitmq"
-			openstackcontrolplanelog.Info("Set default messagingBus.cluster",
-				"instance", r.Name,
-				"service", serviceName,
-				"cluster", "rabbitmq")
-		}
+	// Only migrate if the new field is not already set and deprecated field has a value
+	if serviceMessagingBus.Cluster == "" && deprecatedField != nil && *deprecatedField != "" {
+		serviceMessagingBus.Cluster = *deprecatedField
+		openstackcontrolplanelog.Info("Migrated service rabbitMqClusterName to messagingBus.cluster",
+			"instance", r.Name,
+			"service", serviceName,
+			"cluster", serviceMessagingBus.Cluster)
 	}
 
 	// Clear deprecated field after migration
@@ -1717,10 +1667,8 @@ func (r *OpenStackControlPlane) migrateServiceMessagingBus(
 
 // migrateServiceNotificationsBus migrates a service-level rabbitMqClusterName to notificationsBus.cluster
 // This is used for services like Keystone that use notifications instead of messaging.
-// Priority order:
-// 1. Service-level deprecated field (rabbitMqClusterName)
-// 2. Top-level NotificationsBus
-// 3. No default (notificationsBus is optional)
+// Only handles migration from deprecated field to new field.
+// Inheritance from top-level is handled at runtime in service reconciliation.
 func (r *OpenStackControlPlane) migrateServiceNotificationsBus(
 	serviceNotificationsBus **rabbitmqv1.RabbitMqConfig,
 	deprecatedField *string,
@@ -1744,24 +1692,13 @@ func (r *OpenStackControlPlane) migrateServiceNotificationsBus(
 
 		// Clear deprecated field after migration
 		*deprecatedField = ""
-	} else if *serviceNotificationsBus == nil && r.Spec.NotificationsBus != nil {
-		// Priority 2: Inherit from top-level NotificationsBus if service-level is nil
-		*serviceNotificationsBus = r.Spec.NotificationsBus
-		if (*serviceNotificationsBus).Cluster != "" {
-			openstackcontrolplanelog.Info("Inherited top-level notificationsBus",
-				"instance", r.Name,
-				"service", serviceName,
-				"cluster", (*serviceNotificationsBus).Cluster)
-		}
 	}
 }
 
 // migrateServiceNotificationsBusInstance migrates a service-level notificationsBusInstance to notificationsBus.cluster
 // This handles the deprecated string field notificationsBusInstance that exists on some service specs.
-// Priority order:
-// 1. Service-level deprecated field (notificationsBusInstance)
-// 2. Top-level NotificationsBus
-// 3. No default (notificationsBus is optional)
+// Only handles migration from deprecated field to new field.
+// Inheritance from top-level is handled at runtime in service reconciliation.
 func (r *OpenStackControlPlane) migrateServiceNotificationsBusInstance(
 	serviceNotificationsBus **rabbitmqv1.RabbitMqConfig,
 	deprecatedField **string,
@@ -1785,14 +1722,5 @@ func (r *OpenStackControlPlane) migrateServiceNotificationsBusInstance(
 
 		// Clear deprecated field after migration
 		*deprecatedField = nil
-	} else if *serviceNotificationsBus == nil && r.Spec.NotificationsBus != nil {
-		// Priority 2: Inherit from top-level NotificationsBus if service-level is nil
-		*serviceNotificationsBus = r.Spec.NotificationsBus
-		if (*serviceNotificationsBus).Cluster != "" {
-			openstackcontrolplanelog.Info("Inherited top-level notificationsBus",
-				"instance", r.Name,
-				"service", serviceName,
-				"cluster", (*serviceNotificationsBus).Cluster)
-		}
 	}
 }

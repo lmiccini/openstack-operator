@@ -158,6 +158,14 @@ func ReconcileNeutron(ctx context.Context, instance *corev1beta1.OpenStackContro
 		instance.Spec.Neutron.Template.TopologyRef = instance.Spec.TopologyRef
 	}
 
+	// Propagate MessagingBus from top-level to template if not set
+	// Template-level takes precedence over top-level
+	if instance.Spec.Neutron.Template.MessagingBus.Cluster == "" {
+		if instance.Spec.MessagingBus != nil && instance.Spec.MessagingBus.Cluster != "" {
+			instance.Spec.Neutron.Template.MessagingBus = *instance.Spec.MessagingBus
+		}
+	}
+
 	// When no NotificationsBus is referenced in the subCR (override)
 	// try to inject the top-level one if defined
 	if instance.Spec.Neutron.Template.NotificationsBus == nil {

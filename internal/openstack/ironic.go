@@ -63,6 +63,22 @@ func ReconcileIronic(ctx context.Context, instance *corev1beta1.OpenStackControl
 		instance.Spec.Ironic.Template.TopologyRef = instance.Spec.TopologyRef
 	}
 
+	// Propagate MessagingBus from top-level to template if not set
+	// Template-level takes precedence over top-level
+	if instance.Spec.Ironic.Template.MessagingBus.Cluster == "" {
+		if instance.Spec.MessagingBus != nil && instance.Spec.MessagingBus.Cluster != "" {
+			instance.Spec.Ironic.Template.MessagingBus = *instance.Spec.MessagingBus
+		}
+	}
+
+	// Propagate MessagingBus to IronicNeutronAgent if not set
+	// IronicNeutronAgent inherits from Ironic service-level if not set
+	if instance.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus.Cluster == "" {
+		if instance.Spec.Ironic.Template.MessagingBus.Cluster != "" {
+			instance.Spec.Ironic.Template.IronicNeutronAgent.MessagingBus = instance.Spec.Ironic.Template.MessagingBus
+		}
+	}
+
 	// add selector to service overrides
 	for _, endpointType := range []service.Endpoint{service.EndpointPublic, service.EndpointInternal} {
 		if instance.Spec.Ironic.Template.IronicAPI.Override.Service == nil {

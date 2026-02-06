@@ -118,6 +118,14 @@ func ReconcileBarbican(ctx context.Context, instance *corev1beta1.OpenStackContr
 		instance.Spec.Barbican.Template.TopologyRef = instance.Spec.TopologyRef
 	}
 
+	// Propagate MessagingBus from top-level to template if not set
+	// Template-level takes precedence over top-level
+	if instance.Spec.Barbican.Template.MessagingBus.Cluster == "" {
+		if instance.Spec.MessagingBus != nil && instance.Spec.MessagingBus.Cluster != "" {
+			instance.Spec.Barbican.Template.MessagingBus = *instance.Spec.MessagingBus
+		}
+	}
+
 	// Propagate NotificationsBus from top-level to template if not set
 	// Template-level takes precedence over top-level
 	if instance.Spec.Barbican.Template.NotificationsBus == nil {

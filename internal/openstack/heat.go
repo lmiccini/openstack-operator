@@ -62,6 +62,14 @@ func ReconcileHeat(ctx context.Context, instance *corev1beta1.OpenStackControlPl
 		instance.Spec.Heat.Template.TopologyRef = instance.Spec.TopologyRef
 	}
 
+	// Propagate MessagingBus from top-level to template if not set
+	// Template-level takes precedence over top-level
+	if instance.Spec.Heat.Template.MessagingBus.Cluster == "" {
+		if instance.Spec.MessagingBus != nil && instance.Spec.MessagingBus.Cluster != "" {
+			instance.Spec.Heat.Template.MessagingBus = *instance.Spec.MessagingBus
+		}
+	}
+
 	// Propagate NotificationsBus from top-level to template if not set
 	if instance.Spec.Heat.Template.NotificationsBus == nil {
 		instance.Spec.Heat.Template.NotificationsBus = instance.Spec.NotificationsBus
