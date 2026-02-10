@@ -420,7 +420,11 @@ func DefaultDataPlaneNoNodeSetSpec(tlsEnabled bool) map[string]interface{} {
 	if tlsEnabled {
 		spec["tlsEnabled"] = true
 	}
-	spec["nodes"] = map[string]dataplanev1.NodeSection{"edpm-compute-node-1": {}}
+	spec["nodes"] = map[string]dataplanev1.NodeSection{"edpm-compute-node-1": {
+		Ansible: dataplanev1.AnsibleOpts{
+			AnsibleHost: "192.168.122.100",
+		},
+	}}
 	return spec
 }
 

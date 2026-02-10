@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 
@@ -359,10 +360,17 @@ func reserveIPs(ctx context.Context, helper *helper.Helper,
 		}
 
 		if len(node.Networks) > 0 {
-			for _, net := range node.Networks {
-				if strings.EqualFold(string(net.Name), dataplanev1.CtlPlaneNetwork) ||
-					netServiceNetMap[strings.ToLower(string(net.Name))] == dataplanev1.CtlPlaneNetwork {
+			for i, nnet := range node.Networks {
+				if strings.EqualFold(string(nnet.Name), dataplanev1.CtlPlaneNetwork) ||
+					netServiceNetMap[strings.ToLower(string(nnet.Name))] == dataplanev1.CtlPlaneNetwork {
 					foundCtlPlane = true
+					// Default ctlplane fixedIP from ansibleHost for pre-provisioned nodes
+					if instance.Spec.PreProvisioned &&
+						node.Ansible.AnsibleHost != "" &&
+						(nnet.FixedIP == nil || *nnet.FixedIP == "") &&
+						net.ParseIP(node.Ansible.AnsibleHost) != nil {
+						node.Networks[i].FixedIP = &node.Ansible.AnsibleHost
+					}
 					break
 				}
 			}

@@ -320,6 +320,9 @@ var _ = Describe("Dataplane NodeSet Test", func() {
 				nodes := map[string]dataplanev1.NodeSection{
 					dataplaneNodeName.Name: {
 						HostName: dataplaneNodeName.Name,
+						Ansible: dataplanev1.AnsibleOpts{
+							AnsibleHost: "192.168.122.100",
+						},
 					},
 				}
 				Expect(dataplaneNodeSetInstance.Spec.Nodes).Should(Equal(nodes))
@@ -422,6 +425,9 @@ var _ = Describe("Dataplane NodeSet Test", func() {
 				nodes := map[string]dataplanev1.NodeSection{
 					dataplaneNodeName.Name: {
 						HostName: dataplaneNodeName.Name,
+						Ansible: dataplanev1.AnsibleOpts{
+							AnsibleHost: "192.168.122.100",
+						},
 					},
 				}
 				Expect(dataplaneNodeSetInstance.Spec.Nodes).Should(Equal(nodes))
@@ -726,6 +732,7 @@ var _ = Describe("Dataplane NodeSet Test", func() {
 					},
 					"ansible": map[string]interface{}{
 						"ansibleUser": "test-user",
+						"ansibleHost": "192.168.122.100",
 					},
 				}
 
@@ -845,6 +852,9 @@ var _ = Describe("Dataplane NodeSet Test", func() {
 				nodes := map[string]dataplanev1.NodeSection{
 					dataplaneNodeName.Name: {
 						HostName: dataplaneNodeName.Name,
+						Ansible: dataplanev1.AnsibleOpts{
+							AnsibleHost: "192.168.122.100",
+						},
 					},
 				}
 				Expect(dataplaneNodeSetInstance.Spec.Nodes).Should(Equal(nodes))
@@ -1144,6 +1154,7 @@ var _ = Describe("Dataplane NodeSet Test", func() {
 					},
 					"ansible": map[string]interface{}{
 						"ansibleUser": "test-user",
+						"ansibleHost": "192.168.122.100",
 					},
 				}
 

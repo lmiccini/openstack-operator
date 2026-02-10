@@ -19,6 +19,7 @@ package v1beta1
 import (
 	"context"
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 
@@ -133,6 +134,10 @@ func (r *OpenStackDataPlaneNodeSet) validateNodes(ctx context.Context, c client.
 		errors = append(errors, r.Spec.duplicateNodeCheck(nodeSetList, r.ObjectMeta.Name)...)
 	}
 
+	if r.Spec.PreProvisioned {
+		errors = append(errors, r.Spec.validatePreProvisionedNodes()...)
+	}
+
 	return errors, nil
 
 }
@@ -226,4 +231,33 @@ func (spec *OpenStackDataPlaneNodeSetSpec) ValidateDelete() field.ErrorList {
 
 	return field.ErrorList{}
 
+}
+
+// validatePreProvisionedNodes validates that ansibleHost is a valid IP
+// for pre-provisioned nodes. An IP is required so that the controller
+// can default the ctlplane fixedIP from it, ensuring IPAM reserves the
+// correct address that matches the already-configured node interface.
+func (spec *OpenStackDataPlaneNodeSetSpec) validatePreProvisionedNodes() field.ErrorList {
+	var errors field.ErrorList
+
+	for nodeName, node := range spec.Nodes {
+		nodePath := field.NewPath("spec").Child("nodes").Key(nodeName)
+
+		if node.Ansible.AnsibleHost == "" {
+			errors = append(errors, field.Required(
+				nodePath.Child("ansible", "ansibleHost"),
+				"ansibleHost must be a valid IP address for "+
+					"pre-provisioned nodes"))
+			continue
+		}
+
+		if net.ParseIP(node.Ansible.AnsibleHost) == nil {
+			errors = append(errors, field.Invalid(
+				nodePath.Child("ansible", "ansibleHost"),
+				node.Ansible.AnsibleHost,
+				"ansibleHost must be a valid IP address for "+
+					"pre-provisioned nodes"))
+		}
+	}
+	return errors
 }
