@@ -88,7 +88,7 @@ func ReconcileCinder(ctx context.Context, instance *corev1beta1.OpenStackControl
 	}
 
 	// Application Credential Management (Day-2 operation)
-	cinderReady := cinder.Status.ObservedGeneration == cinder.Generation && cinder.IsReady()
+	cinderReady := cinder.Status.Conditions != nil && cinder.Status.ObservedGeneration == cinder.Generation && cinder.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	cinderSecret := instance.Spec.Cinder.Template.Secret

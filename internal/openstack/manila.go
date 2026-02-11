@@ -67,7 +67,7 @@ func ReconcileManila(ctx context.Context, instance *corev1beta1.OpenStackControl
 	}
 
 	// Application Credential Management (Day-2 operation)
-	manilaReady := manila.Status.ObservedGeneration == manila.Generation && manila.IsReady()
+	manilaReady := manila.Status.Conditions != nil && manila.Status.ObservedGeneration == manila.Generation && manila.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	manilaSecret := instance.Spec.Manila.Template.Secret

@@ -101,7 +101,7 @@ func ReconcileSwift(ctx context.Context, instance *corev1beta1.OpenStackControlP
 	}
 
 	// Application Credential Management (Day-2 operation)
-	swiftReady := swift.Status.ObservedGeneration == swift.GetGeneration() && swift.IsReady()
+	swiftReady := swift.Status.Conditions != nil && swift.Status.ObservedGeneration == swift.GetGeneration() && swift.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	swiftSecret := instance.Spec.Swift.Template.SwiftProxy.Secret
