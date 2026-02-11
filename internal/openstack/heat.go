@@ -112,7 +112,7 @@ func ReconcileHeat(ctx context.Context, instance *corev1beta1.OpenStackControlPl
 	instance.Spec.Heat.Template.HeatCfnAPI.TLS.CaBundleSecretName = instance.Status.TLS.CaBundleSecretName
 
 	// Application Credential Management (Day-2 operation)
-	heatReady := heat.Status.ObservedGeneration == heat.Generation && heat.IsReady()
+	heatReady := heat.Status.Conditions != nil && heat.Status.ObservedGeneration == heat.Generation && heat.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	heatSecret := instance.Spec.Heat.Template.Secret

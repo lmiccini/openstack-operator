@@ -77,7 +77,7 @@ func ReconcileDesignate(ctx context.Context, instance *corev1beta1.OpenStackCont
 	}
 
 	// Application Credential Management (Day-2 operation)
-	designateReady := designate.Status.ObservedGeneration == designate.Generation && designate.IsReady()
+	designateReady := designate.Status.Conditions != nil && designate.Status.ObservedGeneration == designate.Generation && designate.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	designateSecret := instance.Spec.Designate.Template.Secret

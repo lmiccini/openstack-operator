@@ -123,7 +123,7 @@ func ReconcileTelemetry(ctx context.Context, instance *corev1beta1.OpenStackCont
 
 	// Application Credential Management (Day-2 operation)
 	// Telemetry has 3 separate services with 3 different users: aodh, ceilometer, cloudkitty
-	telemetryReady := telemetry.Status.ObservedGeneration == telemetry.Generation && telemetry.IsReady()
+	telemetryReady := telemetry.Status.Conditions != nil && telemetry.Status.ObservedGeneration == telemetry.Generation && telemetry.IsReady()
 
 	// AC for Aodh (if service enabled)
 	if instance.Spec.Telemetry.Template.Autoscaling.Enabled != nil && *instance.Spec.Telemetry.Template.Autoscaling.Enabled {

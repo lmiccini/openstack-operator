@@ -115,7 +115,7 @@ func ReconcileIronic(ctx context.Context, instance *corev1beta1.OpenStackControl
 
 	// Application Credential Management (Day-2 operation)
 	// Ironic has 2 users: ironic (main service) and ironic-inspector
-	ironicReady := ironic.Status.ObservedGeneration == ironic.Generation && ironic.IsReady()
+	ironicReady := ironic.Status.Conditions != nil && ironic.Status.ObservedGeneration == ironic.Generation && ironic.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	// Both ironic and ironic-inspector share the same secret

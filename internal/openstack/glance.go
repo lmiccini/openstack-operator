@@ -111,7 +111,7 @@ func ReconcileGlance(ctx context.Context, instance *corev1beta1.OpenStackControl
 
 	// Application Credential Management (Day-2 operation)
 	// Check if AC should be enabled and manage it accordingly
-	glanceReady := glance.Status.ObservedGeneration == glance.Generation && glance.IsReady()
+	glanceReady := glance.Status.Conditions != nil && glance.Status.ObservedGeneration == glance.Generation && glance.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	glanceSecret := instance.Spec.Glance.Template.Secret

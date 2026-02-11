@@ -159,7 +159,7 @@ func ReconcileOctavia(ctx context.Context, instance *corev1beta1.OpenStackContro
 	}
 
 	// Application Credential Management (Day-2 operation)
-	octaviaReady := octavia.Status.ObservedGeneration == octavia.Generation && octavia.IsReady()
+	octaviaReady := octavia.Status.Conditions != nil && octavia.Status.ObservedGeneration == octavia.Generation && octavia.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	octaviaSecret := instance.Spec.Octavia.Template.Secret

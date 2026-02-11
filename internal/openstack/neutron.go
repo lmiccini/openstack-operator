@@ -111,7 +111,7 @@ func ReconcileNeutron(ctx context.Context, instance *corev1beta1.OpenStackContro
 	instance.Spec.Neutron.Template.TLS.CaBundleSecretName = instance.Status.TLS.CaBundleSecretName
 
 	// Application Credential Management (Day-2 operation)
-	neutronReady := neutronAPI.Status.ObservedGeneration == neutronAPI.Generation && neutronAPI.IsReady()
+	neutronReady := neutronAPI.Status.Conditions != nil && neutronAPI.Status.ObservedGeneration == neutronAPI.Generation && neutronAPI.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	neutronSecret := instance.Spec.Neutron.Template.Secret

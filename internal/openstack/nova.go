@@ -183,7 +183,7 @@ func ReconcileNova(ctx context.Context, instance *corev1beta1.OpenStackControlPl
 	}
 
 	// Application Credential Management (Day-2 operation)
-	novaReady := nova.Status.ObservedGeneration == nova.Generation && nova.IsReady()
+	novaReady := nova.Status.Conditions != nil && nova.Status.ObservedGeneration == nova.Generation && nova.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	novaSecret := instance.Spec.Nova.Template.Secret

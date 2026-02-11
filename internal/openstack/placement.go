@@ -71,7 +71,7 @@ func ReconcilePlacementAPI(ctx context.Context, instance *corev1beta1.OpenStackC
 	}
 
 	// Application Credential Management (Day-2 operation)
-	placementReady := placementAPI.Status.ObservedGeneration == placementAPI.Generation && placementAPI.IsReady()
+	placementReady := placementAPI.Status.Conditions != nil && placementAPI.Status.ObservedGeneration == placementAPI.Generation && placementAPI.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	placementSecret := instance.Spec.Placement.Template.Secret

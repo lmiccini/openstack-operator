@@ -65,7 +65,7 @@ func ReconcileWatcher(ctx context.Context, instance *corev1beta1.OpenStackContro
 
 	// Application Credential Management (Day-2 operation)
 	// Watcher uses pointer fields, safely extract values
-	watcherReady := watcher.Status.ObservedGeneration == watcher.Generation && watcher.IsReady()
+	watcherReady := watcher.Status.Conditions != nil && watcher.Status.ObservedGeneration == watcher.Generation && watcher.IsReady()
 
 	// Helper to get Watcher values (which are pointers) with fallback logic
 	getWatcherSecret := func() string {

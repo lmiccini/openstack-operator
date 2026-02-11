@@ -65,7 +65,7 @@ func ReconcileBarbican(ctx context.Context, instance *corev1beta1.OpenStackContr
 	}
 
 	// Application Credential Management (Day-2 operation)
-	barbicanReady := barbican.Status.ObservedGeneration == barbican.Generation && barbican.IsReady()
+	barbicanReady := barbican.Status.Conditions != nil && barbican.Status.ObservedGeneration == barbican.Generation && barbican.IsReady()
 
 	// Apply same fallback logic as in CreateOrPatch to avoid passing empty values to AC
 	barbicanSecret := instance.Spec.Barbican.Template.Secret
