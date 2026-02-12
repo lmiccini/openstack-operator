@@ -141,7 +141,11 @@ func CustomServiceImageSpec() map[string]interface{} {
 				"ansibleVars": ansibleServiceVars,
 			},
 		},
-		"nodes": map[string]dataplanev1.NodeSection{"edpm-compute-node-1": {}},
+		"nodes": map[string]dataplanev1.NodeSection{"edpm-compute-node-1": {
+			Ansible: dataplanev1.AnsibleOpts{
+				AnsibleHost: "192.168.122.100",
+			},
+		}},
 	}
 }
 
@@ -235,6 +239,9 @@ func DefaultDataPlaneNodeSetSpec(nodeSetName string) map[string]interface{} {
 					{Name: "networkinternal", SubnetName: "subnet1"},
 					{Name: "ctlplane", SubnetName: "subnet1"},
 				},
+				"ansible": map[string]interface{}{
+					"ansibleHost": "192.168.122.100",
+				},
 			},
 		},
 		"baremetalSetTemplate": map[string]interface{}{
@@ -268,6 +275,9 @@ func DuplicateServiceNodeSetSpec(nodeSetName string) map[string]interface{} {
 					{Name: "networkinternal", SubnetName: "subnet1"},
 					{Name: "ctlplane", SubnetName: "subnet1"},
 				},
+				"ansible": map[string]interface{}{
+					"ansibleHost": "192.168.122.100",
+				},
 			},
 		},
 		"secretMaxSize":  1048576,
@@ -292,7 +302,11 @@ func DefaultDataPlaneNoNodeSetSpec(tlsEnabled bool) map[string]interface{} {
 	if tlsEnabled {
 		spec["tlsEnabled"] = true
 	}
-	spec["nodes"] = map[string]dataplanev1.NodeSection{"edpm-compute-node-1": {}}
+	spec["nodes"] = map[string]dataplanev1.NodeSection{"edpm-compute-node-1": {
+		Ansible: dataplanev1.AnsibleOpts{
+			AnsibleHost: "192.168.122.100",
+		},
+	}}
 	return spec
 }
 

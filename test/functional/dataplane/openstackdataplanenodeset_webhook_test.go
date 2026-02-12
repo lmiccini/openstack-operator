@@ -130,7 +130,11 @@ var _ = Describe("DataplaneNodeSet Webhook", func() {
 			nodeSetSpec["preProvisioned"] = true
 			nodeSetSpec["nodes"] = map[string]interface{}{
 				"compute-0": map[string]interface{}{
-					"hostName": "compute-0"},
+					"hostName": "compute-0",
+					"ansible": map[string]interface{}{
+						"ansibleHost": "192.168.122.100",
+					},
+				},
 			}
 			DeferCleanup(th.DeleteInstance, CreateDataplaneNodeSet(dataplaneNodeSetName, nodeSetSpec))
 		})
@@ -141,7 +145,11 @@ var _ = Describe("DataplaneNodeSet Webhook", func() {
 				newNodeSetSpec["preProvisioned"] = true
 				newNodeSetSpec["nodes"] = map[string]interface{}{
 					"compute-0": map[string]interface{}{
-						"hostName": "compute-0"},
+						"hostName": "compute-0",
+						"ansible": map[string]interface{}{
+							"ansibleHost": "192.168.122.100",
+						},
+					},
 				}
 				newInstance := DefaultDataplaneNodeSetTemplate(types.NamespacedName{Name: "test-duplicate-node", Namespace: namespace}, newNodeSetSpec)
 				unstructuredObj := &unstructured.Unstructured{Object: newInstance}
@@ -159,16 +167,24 @@ var _ = Describe("DataplaneNodeSet Webhook", func() {
 					"compute-3": map[string]interface{}{
 						"hostName": "compute-3",
 						"ansible": map[string]interface{}{
-							"ansibleHost": "compute-3",
+							"ansibleHost": "192.168.122.103",
 						},
 					},
 					"compute-2": map[string]interface{}{
-						"hostName": "compute-2"},
+						"hostName": "compute-2",
+						"ansible": map[string]interface{}{
+							"ansibleHost": "192.168.122.102",
+						},
+					},
 					"compute-8": map[string]interface{}{
-						"hostName": "compute-8"},
+						"hostName": "compute-8",
+						"ansible": map[string]interface{}{
+							"ansibleHost": "192.168.122.108",
+						},
+					},
 					"compute-0": map[string]interface{}{
 						"ansible": map[string]interface{}{
-							"ansibleHost": "compute-0",
+							"ansibleHost": "192.168.122.100",
 						},
 					},
 				}
@@ -180,13 +196,43 @@ var _ = Describe("DataplaneNodeSet Webhook", func() {
 			}).Should(ContainSubstring("already exists in another cluster"))
 		})
 	})
+
+	When("A pre-provisioned NodeSet is created without a valid IP as ansibleHost", func() {
+		It("Should block creation", func() {
+			Eventually(func(_ Gomega) string {
+				spec := DefaultDataPlaneNoNodeSetSpec(false)
+				spec["nodes"] = map[string]interface{}{
+					"compute-0": map[string]interface{}{
+						"hostName": "compute-0",
+						"ansible": map[string]interface{}{
+							"ansibleHost": "compute-0.example.com",
+						},
+					},
+				}
+				name := types.NamespacedName{
+					Name: "test-hostname-ansiblehost", Namespace: namespace}
+				obj := DefaultDataplaneNodeSetTemplate(name, spec)
+				unstructuredObj := &unstructured.Unstructured{Object: obj}
+				_, err := controllerutil.CreateOrPatch(
+					th.Ctx, th.K8sClient, unstructuredObj,
+					func() error { return nil })
+				return fmt.Sprintf("%s", err)
+			}).Should(ContainSubstring(
+				"ansibleHost must be a valid IP address"))
+		})
+	})
+
 	When("A NodeSet is updated with a OpenStackDataPlaneDeployment", func() {
 		BeforeEach(func() {
 			nodeSetSpec := DefaultDataPlaneNoNodeSetSpec(false)
 			nodeSetSpec["preProvisioned"] = true
 			nodeSetSpec["nodes"] = map[string]interface{}{
 				"compute-0": map[string]interface{}{
-					"hostName": "compute-0"},
+					"hostName": "compute-0",
+					"ansible": map[string]interface{}{
+						"ansibleHost": "192.168.122.100",
+					},
+				},
 			}
 
 			DeferCleanup(th.DeleteInstance, CreateDataplaneNodeSet(dataplaneNodeSetName, nodeSetSpec))
