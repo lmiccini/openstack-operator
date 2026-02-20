@@ -19,6 +19,7 @@ package dataplane
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ import (
 
 	"github.com/go-logr/logr"
 	infranetworkv1 "github.com/openstack-k8s-operators/infra-operator/apis/network/v1beta1"
+	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
 	condition "github.com/openstack-k8s-operators/lib-common/modules/common/condition"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/helper"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/rolebinding"
@@ -68,6 +70,21 @@ const (
 	AnsibleSSHPrivateKey = "ssh-privatekey"
 	// AnsibleSSHAuthorizedKeys authorized keys
 	AnsibleSSHAuthorizedKeys = "authorized_keys"
+
+	// Certificate secret prefix
+	certSecretPrefix = "cert-"
+	// RabbitMQ user secret prefix
+	rabbitmqUserSecretPrefix = "rabbitmq-user-"
+	// Default RabbitMQ user to skip
+	defaultRabbitMQUser = "default_user"
+	// Guest RabbitMQ user to skip
+	guestRabbitMQUser = "guest"
+)
+
+var (
+	// Regex to extract username from RabbitMQ transport_url
+	// Format: rabbit://username:password@host:5672/vhost
+	transportURLRegex = regexp.MustCompile(`rabbit[^:]*://([^:]+):`)
 )
 
 // OpenStackDataPlaneNodeSetReconciler reconciles a OpenStackDataPlaneNodeSet object
@@ -108,6 +125,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) GetLogger(ctx context.Context) log
 // +kubebuilder:rbac:groups=network.openstack.org,resources=dnsdata/finalizers,verbs=update;patch
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete;
 // +kubebuilder:rbac:groups=core.openstack.org,resources=openstackversions,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rabbitmq.openstack.org,resources=transporturls,verbs=get;list;watch
 
 // RBAC for the ServiceAccount for the internal image registry
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
@@ -404,7 +422,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) Reconcile(ctx context.Context, req
 	}
 
 	isDeploymentReady, isDeploymentRunning, isDeploymentFailed, failedDeployment, err := checkDeployment(
-		ctx, helper, instance)
+		ctx, helper, instance, r)
 	if !isDeploymentFailed && err != nil {
 		instance.Status.Conditions.MarkFalse(
 			condition.DeploymentReadyCondition,
@@ -489,7 +507,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) Reconcile(ctx context.Context, req
 }
 
 func checkDeployment(ctx context.Context, helper *helper.Helper,
-	instance *dataplanev1.OpenStackDataPlaneNodeSet) (
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	r *OpenStackDataPlaneNodeSetReconciler) (
 	isNodeSetDeploymentReady bool, isNodeSetDeploymentRunning bool,
 	isNodeSetDeploymentFailed bool, failedDeploymentName string, err error) {
 
@@ -589,6 +608,42 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			}
 
 			isNodeSetDeploymentReady = true
+
+			// Track if this deployment is actually changing the nodeset config
+			// IMPORTANT: Check BEFORE copying hashes, since multiple deployments process in the same reconcile
+			newDeployedConfigHash, hasNodeSetHash := deployment.Status.NodeSetHashes[instance.Name]
+			if !hasNodeSetHash {
+				// Deployment doesn't have a hash for this nodeset, skip credential tracking
+				helper.GetLogger().Info("Deployment missing NodeSetHash, skipping credential tracking",
+					"deployment", deployment.Name,
+					"nodeset", instance.Name)
+				newDeployedConfigHash = ""
+			}
+			configHashChanged := instance.Status.DeployedConfigHash != newDeployedConfigHash
+
+			// Check if any secrets changed (for credential rotation detection)
+			// This must be done BEFORE copying the hashes below
+			secretsChanged := false
+			for k, newHash := range deployment.Status.SecretHashes {
+				if oldHash, exists := instance.Status.SecretHashes[k]; !exists || oldHash != newHash {
+					secretsChanged = true
+					break
+				}
+			}
+
+			// Update service credential tracking status BEFORE copying hashes
+			// Only update when this deployment is actually changing the config or secrets
+			// This prevents old deployments from updating status with current secrets they didn't deploy
+			if configHashChanged || secretsChanged {
+				if err := r.updateServiceCredentialStatus(ctx, instance, deployment); err != nil {
+					// This is a critical error - if we can't track credentials, RabbitMQ users
+					// could be deleted prematurely. Return error to retry.
+					helper.GetLogger().Error(err, "Failed to update service credential status")
+					return false, false, false, "", err
+				}
+			}
+
+			// Now copy the hashes to nodeset status
 			for k, v := range deployment.Status.ConfigMapHashes {
 				instance.Status.ConfigMapHashes[k] = v
 			}
@@ -598,7 +653,7 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			for k, v := range deployment.Status.ContainerImages {
 				instance.Status.ContainerImages[k] = v
 			}
-			instance.Status.DeployedConfigHash = deployment.Status.NodeSetHashes[instance.Name]
+			instance.Status.DeployedConfigHash = newDeployedConfigHash
 
 			// Get list of services by name, either from ServicesOverride or
 			// the NodeSet.
@@ -968,4 +1023,419 @@ func checkAnsibleVarsFromChanged(
 	}
 
 	return false, nil
+}
+
+// updateServiceCredentialStatus updates the NodeSet status with information about which
+// nodes have been updated with which service credentials from a completed deployment.
+//
+// NOTE: This status is read by infra-operator's RabbitMQUser controller to determine when
+// old credentials can be safely deleted. Controller-runtime uses an eventually consistent
+// cache, so there may be a brief delay between this status update and infra-operator
+// observing it. This is mitigated by:
+//   - The 30-second requeue interval in RabbitMQUser deletion checks
+//   - The 1-hour grace period before allowing deletion despite check failures
+func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
+	ctx context.Context,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	deployment *dataplanev1.OpenStackDataPlaneDeployment,
+) error {
+	Log := r.GetLogger(ctx)
+
+	// Validate inputs
+	if instance == nil || deployment == nil {
+		return fmt.Errorf("instance and deployment must not be nil")
+	}
+
+	// Only update if deployment is ready
+	if !deployment.Status.Conditions.IsTrue(condition.DeploymentReadyCondition) {
+		return nil
+	}
+
+	// Get deployment completion time
+	deploymentReadyCondition := deployment.Status.Conditions.Get(condition.DeploymentReadyCondition)
+	if deploymentReadyCondition == nil {
+		return fmt.Errorf("deployment %s/%s is ready but DeploymentReady condition not found",
+			deployment.Namespace, deployment.Name)
+	}
+	deploymentCompletionTime := deploymentReadyCondition.LastTransitionTime
+
+	// Initialize map if needed
+	if instance.Status.ServiceCredentialStatus == nil {
+		instance.Status.ServiceCredentialStatus = make(map[string]dataplanev1.ServiceCredentialInfo)
+	}
+
+	// Get all nodes in this nodeset
+	allNodes := getAllNodeNames(instance)
+	totalNodes := len(allNodes)
+
+	// Determine which nodes were covered by this deployment (handle AnsibleLimit)
+	coveredNodes := getNodesCoveredByDeployment(deployment, instance)
+
+	Log.Info("Updating service credential status",
+		"deployment", deployment.Name,
+		"totalNodes", totalNodes,
+		"coveredNodes", len(coveredNodes))
+
+	// For each service, update credential status
+	serviceSecrets, err := r.detectServicesInDeployment(ctx, deployment, instance.Namespace)
+	if err != nil {
+		Log.Error(err, "Failed to detect services in deployment")
+		return err
+	}
+
+	for serviceName, secretInfo := range serviceSecrets {
+
+		// Skip if no RabbitMQ user (service uses default_user)
+		if secretInfo.rabbitmqUserName == "" {
+			continue
+		}
+
+		// Check if this deployment actually includes this config secret
+		// deployment.Status.SecretHashes is updated continuously with current values,
+		// so we verify it contains this secret to ensure it deployed this service
+		deployedConfigHash, hasConfigSecret := deployment.Status.SecretHashes[secretInfo.configSecretName]
+		if !hasConfigSecret {
+			Log.V(1).Info("Skipping service - config secret not in deployment",
+				"service", serviceName,
+				"configSecret", secretInfo.configSecretName,
+				"deployment", deployment.Name)
+			continue
+		}
+
+		// Verify the deployed hash matches what we detected from the current secret
+		// If they differ, the secret was updated after deployment and we can't trust
+		// that we're tracking the credentials that were actually deployed
+		if deployedConfigHash != secretInfo.configSecretHash {
+			Log.Info("Config secret changed after deployment - skipping to avoid tracking wrong credentials",
+				"service", serviceName,
+				"configSecret", secretInfo.configSecretName,
+				"deployment", deployment.Name,
+				"deployedHash", deployedConfigHash,
+				"currentHash", secretInfo.configSecretHash)
+			continue
+		}
+
+		// secretInfo.rabbitmqUserName already contains the full secret name
+		rabbitmqUserSecretName := secretInfo.rabbitmqUserName
+
+		// Get the RabbitMQUser secret to check creation time and compute its hash
+		rabbitmqUserSecret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      rabbitmqUserSecretName,
+			Namespace: instance.Namespace,
+		}, rabbitmqUserSecret)
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				Log.V(1).Info("RabbitMQUser secret not found yet, skipping tracking",
+					"service", serviceName,
+					"rabbitmqUserSecret", rabbitmqUserSecretName)
+				continue
+			}
+			return fmt.Errorf("failed to get RabbitMQUser secret %s: %w", rabbitmqUserSecretName, err)
+		}
+
+		// Check if deployment was created before this secret - if so, it couldn't have deployed these credentials
+		if deployment.CreationTimestamp.Before(&rabbitmqUserSecret.CreationTimestamp) {
+			Log.Info("Skipping service - deployment created before RabbitMQUser secret",
+				"service", serviceName,
+				"deployment", deployment.Name,
+				"deploymentCreated", deployment.CreationTimestamp.Time,
+				"secretCreated", rabbitmqUserSecret.CreationTimestamp.Time,
+				"rabbitmqUserSecret", rabbitmqUserSecretName)
+			continue
+		}
+
+		// Compute hash of the RabbitMQUser secret
+		rabbitmqUserSecretHash, err := util.ObjectHash(rabbitmqUserSecret.Data)
+		if err != nil {
+			return fmt.Errorf("failed to compute hash for RabbitMQUser secret %s: %w", rabbitmqUserSecretName, err)
+		}
+
+		// Check if we've already processed this exact deployment for this service with this credential
+		// We compare both the completion time AND the RabbitMQUser secret hash to ensure we don't
+		// reprocess the same deployment if nothing changed
+		existingInfo, exists := instance.Status.ServiceCredentialStatus[serviceName]
+		if exists && existingInfo.LastUpdateTime != nil && existingInfo.SecretHash == rabbitmqUserSecretHash {
+			if !deploymentCompletionTime.After(existingInfo.LastUpdateTime.Time) {
+				Log.V(1).Info("Skipping service - already processed by this or newer deployment",
+					"service", serviceName,
+					"deployment", deployment.Name,
+					"deploymentCompletionTime", deploymentCompletionTime.Time,
+					"lastUpdateTime", existingInfo.LastUpdateTime.Time,
+					"rabbitmqUserSecretHash", rabbitmqUserSecretHash)
+				continue
+			}
+		}
+
+		// Get current status or create new
+		credInfo, exists := instance.Status.ServiceCredentialStatus[serviceName]
+		if !exists || credInfo.SecretHash != rabbitmqUserSecretHash {
+			// New secret version, reset tracking
+			credInfo = dataplanev1.ServiceCredentialInfo{
+				SecretName:      rabbitmqUserSecretName,
+				SecretHash:      rabbitmqUserSecretHash,
+				UpdatedNodes:    []string{},
+				TotalNodes:      totalNodes,
+				AllNodesUpdated: false,
+			}
+			Log.Info("New credential version detected",
+				"service", serviceName,
+				"configSecret", secretInfo.configSecretName,
+				"rabbitmqUserSecret", rabbitmqUserSecretName,
+				"rabbitmqUserSecretHash", rabbitmqUserSecretHash)
+		} else if credInfo.TotalNodes != totalNodes {
+			// NodeSet was scaled - log warning and update total
+			Log.Info("NodeSet size changed, updating credential tracking",
+				"service", serviceName,
+				"oldTotal", credInfo.TotalNodes,
+				"newTotal", totalNodes,
+				"updatedNodes", len(credInfo.UpdatedNodes))
+			credInfo.TotalNodes = totalNodes
+		}
+
+		// Add covered nodes to updated list (avoiding duplicates)
+		for _, node := range coveredNodes {
+			if !slices.Contains(credInfo.UpdatedNodes, node) {
+				credInfo.UpdatedNodes = append(credInfo.UpdatedNodes, node)
+			}
+		}
+
+		// Check if all nodes updated
+		credInfo.AllNodesUpdated = len(credInfo.UpdatedNodes) == credInfo.TotalNodes
+
+		// Update timestamp to deployment completion time
+		// This tracks when the deployment that updated these credentials completed,
+		// allowing us to skip older deployments that haven't deployed anything new
+		credInfo.LastUpdateTime = &deploymentCompletionTime
+
+		// Save back to status
+		instance.Status.ServiceCredentialStatus[serviceName] = credInfo
+
+		Log.Info("Updated service credential status",
+			"service", serviceName,
+			"updatedNodes", len(credInfo.UpdatedNodes),
+			"totalNodes", credInfo.TotalNodes,
+			"allNodesUpdated", credInfo.AllNodesUpdated)
+	}
+
+	return nil
+}
+
+// ServiceSecretInfo holds information about a service's RabbitMQ credentials
+type ServiceSecretInfo struct {
+	configSecretName string // name of the config secret (e.g., nova-cell1-compute-config)
+	configSecretHash string // hash of the config secret
+	rabbitmqUserName string // RabbitMQUser secret name (e.g., rabbitmq-user-nova-cell1-transport-novacell1-2-user)
+}
+
+// detectServicesInDeployment detects which services in a deployment have dedicated RabbitMQ users.
+// It reads all secrets in deployment.Status.SecretHashes (excluding cert-* secrets),
+// extracts all RabbitMQ usernames from transport_url fields, looks up the corresponding
+// TransportURL CRs to get the RabbitMQUser reference, and tracks them.
+//
+// Handles multiple transport URLs per secret (e.g., RPC and notifications).
+// Services using default_user are skipped (not tracked).
+func (r *OpenStackDataPlaneNodeSetReconciler) detectServicesInDeployment(
+	ctx context.Context,
+	deployment *dataplanev1.OpenStackDataPlaneDeployment,
+	namespace string,
+) (map[string]ServiceSecretInfo, error) {
+	Log := r.GetLogger(ctx)
+	services := make(map[string]ServiceSecretInfo)
+
+	if deployment == nil {
+		return services, nil
+	}
+
+	// List all TransportURL CRs in the namespace to build a username -> RabbitMQUser mapping
+	transportURLList := &rabbitmqv1.TransportURLList{}
+	if err := r.List(ctx, transportURLList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list TransportURLs: %w", err)
+	}
+
+	// Build map: username -> RabbitMQUser secret name
+	usernameToSecretName := make(map[string]string)
+	for _, transportURL := range transportURLList.Items {
+		if transportURL.Status.RabbitmqUserRef != "" && transportURL.Status.RabbitmqUsername != "" {
+			// RabbitMQUser secret name format: rabbitmq-user-{RabbitmqUserRef}
+			rabbitmqUserSecretName := fmt.Sprintf("%s%s", rabbitmqUserSecretPrefix, transportURL.Status.RabbitmqUserRef)
+			usernameToSecretName[transportURL.Status.RabbitmqUsername] = rabbitmqUserSecretName
+			Log.V(1).Info("Found TransportURL with dedicated user",
+				"transportURL", transportURL.Name,
+				"username", transportURL.Status.RabbitmqUsername,
+				"rabbitmqUserSecret", rabbitmqUserSecretName)
+		}
+	}
+
+	for secretName, hash := range deployment.Status.SecretHashes {
+		// Skip certificate secrets
+		if strings.HasPrefix(secretName, certSecretPrefix) {
+			continue
+		}
+
+		// Read the secret to check for transport_url
+		configSecret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      secretName,
+			Namespace: namespace,
+		}, configSecret)
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				Log.V(1).Info("Secret not found, skipping", "secret", secretName)
+			} else {
+				// Log error but continue with other secrets to avoid losing all detection
+				// due to transient API errors
+				Log.Error(err, "Failed to get secret, skipping", "secret", secretName)
+			}
+			continue
+		}
+
+		// Extract all unique RabbitMQ usernames from this secret
+		// (there may be multiple: one for RPC, one for notifications)
+		foundUsers := make(map[string]bool)
+
+		for key, value := range configSecret.Data {
+			strValue := string(value)
+
+			// Find all transport URLs in this value
+			matches := transportURLRegex.FindAllStringSubmatch(strValue, -1)
+			for _, match := range matches {
+				if len(match) < 2 {
+					continue
+				}
+
+				username := match[1]
+
+				// Skip default users
+				if strings.HasPrefix(username, defaultRabbitMQUser) || username == guestRabbitMQUser {
+					continue
+				}
+
+				// Look up the RabbitMQUser secret name from our mapping
+				if rabbitmqUserSecretName, ok := usernameToSecretName[username]; ok {
+					foundUsers[rabbitmqUserSecretName] = true
+					Log.V(1).Info("Found RabbitMQ username in secret",
+						"secret", secretName,
+						"key", key,
+						"username", username,
+						"rabbitmqUserSecret", rabbitmqUserSecretName)
+				} else {
+					Log.V(1).Info("Found username but no matching TransportURL",
+						"secret", secretName,
+						"username", username)
+				}
+			}
+		}
+
+		// If we found any dedicated RabbitMQ users, track this secret
+		if len(foundUsers) > 0 {
+			// Determine service name from secret name pattern
+			var serviceName string
+			if strings.HasPrefix(secretName, "nova-cell") && strings.Contains(secretName, "-compute-config") {
+				serviceName = "nova"
+			} else if strings.HasPrefix(secretName, "neutron-") && strings.HasSuffix(secretName, "-neutron-config") {
+				serviceName = "neutron"
+			} else if strings.HasPrefix(secretName, "ironic-") && strings.Contains(secretName, "config") {
+				serviceName = "ironic"
+			} else {
+				// Generic: use first part of secret name
+				parts := strings.Split(secretName, "-")
+				if len(parts) > 0 {
+					serviceName = parts[0]
+				} else {
+					serviceName = secretName
+				}
+			}
+
+			// Select user deterministically: convert map to sorted slice and pick first
+			// This ensures consistent behavior across reconciliations even with multiple users
+			userList := make([]string, 0, len(foundUsers))
+			for user := range foundUsers {
+				userList = append(userList, user)
+			}
+			slices.Sort(userList)
+			selectedUser := userList[0]
+
+			services[serviceName] = ServiceSecretInfo{
+				configSecretName: secretName,
+				configSecretHash: hash,
+				rabbitmqUserName: selectedUser,
+			}
+
+			if len(foundUsers) > 1 {
+				Log.Info("Multiple RabbitMQ users found for service, selecting first alphabetically",
+					"service", serviceName,
+					"configSecret", secretName,
+					"userCount", len(foundUsers),
+					"allUsers", userList,
+					"selected", selectedUser)
+			} else {
+				Log.V(1).Info("Detected service with dedicated RabbitMQ user",
+					"service", serviceName,
+					"configSecret", secretName,
+					"rabbitmqUser", selectedUser)
+			}
+		}
+	}
+
+	return services, nil
+}
+
+// getNodesCoveredByDeployment determines which nodes were covered by a deployment
+// based on the AnsibleLimit field
+func getNodesCoveredByDeployment(
+	deployment *dataplanev1.OpenStackDataPlaneDeployment,
+	nodeset *dataplanev1.OpenStackDataPlaneNodeSet,
+) []string {
+	if deployment == nil || nodeset == nil {
+		return []string{}
+	}
+
+	allNodes := getAllNodeNames(nodeset)
+
+	// Check AnsibleLimit
+	ansibleLimit := deployment.Spec.AnsibleLimit
+	if ansibleLimit == "" || ansibleLimit == "*" {
+		// All nodes covered
+		return allNodes
+	}
+
+	// Parse AnsibleLimit (comma-separated list)
+	limitParts := strings.Split(ansibleLimit, ",")
+
+	coveredNodes := make([]string, 0, len(allNodes))
+	for _, node := range allNodes {
+		for _, part := range limitParts {
+			part = strings.TrimSpace(part)
+
+			// Exact match
+			if part == node {
+				coveredNodes = append(coveredNodes, node)
+				break
+			}
+
+			// Wildcard matching
+			if strings.HasSuffix(part, "*") {
+				prefix := strings.TrimSuffix(part, "*")
+				if strings.HasPrefix(node, prefix) {
+					coveredNodes = append(coveredNodes, node)
+					break
+				}
+			}
+		}
+	}
+
+	return coveredNodes
+}
+
+// getAllNodeNames returns a list of all node names in the nodeset
+func getAllNodeNames(nodeset *dataplanev1.OpenStackDataPlaneNodeSet) []string {
+	if nodeset == nil {
+		return []string{}
+	}
+	nodes := make([]string, 0, len(nodeset.Spec.Nodes))
+	for nodeName := range nodeset.Spec.Nodes {
+		nodes = append(nodes, nodeName)
+	}
+	return nodes
 }

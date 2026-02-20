@@ -160,6 +160,36 @@ type OpenStackDataPlaneNodeSetStatus struct {
 
 	//DeployedBmhHash - Hash of BMHs deployed
 	DeployedBmhHash string `json:"deployedBmhHash,omitempty"`
+
+	// ServiceCredentialStatus tracks which nodes have been updated with current credentials per service
+	// Key is service name (e.g., "nova", "neutron", "ironic")
+	// This enables RabbitMQ credential lifecycle management by tracking which nodes actually have which credentials
+	ServiceCredentialStatus map[string]ServiceCredentialInfo `json:"serviceCredentialStatus,omitempty"`
+}
+
+// ServiceCredentialInfo tracks credential deployment status for a specific service
+type ServiceCredentialInfo struct {
+	// SecretName is the name of the secret containing credentials (e.g., "nova-cell0-transport")
+	SecretName string `json:"secretName,omitempty"`
+
+	// SecretHash is the hash of the current secret data
+	// This is compared against deployment.Status.SecretHashes to determine version
+	SecretHash string `json:"secretHash,omitempty"`
+
+	// UpdatedNodes lists the nodes that have been updated with this secret hash
+	// This is populated as deployments complete, tracking actual rollout progress
+	UpdatedNodes []string `json:"updatedNodes,omitempty"`
+
+	// TotalNodes is the total number of nodes in the nodeset that use this service
+	// Typically equal to len(nodeset.Spec.Nodes)
+	TotalNodes int `json:"totalNodes,omitempty"`
+
+	// AllNodesUpdated indicates if all nodes have been updated with current credentials
+	// True when len(UpdatedNodes) == TotalNodes
+	AllNodesUpdated bool `json:"allNodesUpdated,omitempty"`
+
+	// LastUpdateTime is when this service credential status was last updated
+	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
