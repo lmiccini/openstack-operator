@@ -1107,14 +1107,24 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 		}
 	}
 
-	// Track each RabbitMQ secret (uses secret name as key for tracking)
+	// Track each RabbitMQ secret using TransportURL identifier as key (not secret name)
+	// This enables automatic rotation detection: when a new user is created for the same
+	// TransportURL, we move the old credential to Previous* fields
 	for secretName, secretInfo := range rabbitmqSecrets {
-		// Get current status or create new
-		credInfo, exists := instance.Status.ServiceCredentialStatus[secretName]
+		// Extract TransportURL identifier from secret name to use as tracking key
+		// Example: rabbitmq-user-nova-cell1-transport-cell1user2-user → nova-cell1-transport
+		transportURLID := extractTransportURLFromSecretName(secretName)
+		if transportURLID == "" {
+			Log.Error(fmt.Errorf("failed to extract TransportURL from secret name"), "",
+				"secret", secretName)
+			continue
+		}
+
+		// Use TransportURL as key for status map
+		credInfo, exists := instance.Status.ServiceCredentialStatus[transportURLID]
 
 		if !exists {
-			// First time seeing this secret - create new tracking entry
-			// Only add nodes if deployment is ready
+			// First time seeing this TransportURL
 			updatedNodes := []string{}
 			if isDeploymentReady {
 				updatedNodes = coveredNodes
@@ -1129,19 +1139,20 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 			}
 
 			Log.Info("New RabbitMQ credential detected",
+				"transportURL", transportURLID,
 				"secret", secretName,
 				"deploymentReady", isDeploymentReady,
 				"updatedNodes", len(updatedNodes))
 
-		} else if credInfo.SecretHash != secretInfo.secretHash {
-			// CREDENTIAL ROTATION: New version of existing secret detected
+		} else if credInfo.SecretName != secretName {
+			// CREDENTIAL ROTATION: Different secret (new user) for same TransportURL
 			// BUG FIX: Save current as previous BEFORE updating to new version
 			// This prevents old credentials from becoming invisible to RabbitMQ controller
 
-			Log.Info("RabbitMQ credential rotation detected",
-				"secret", secretName,
-				"oldHash", credInfo.SecretHash,
-				"newHash", secretInfo.secretHash,
+			Log.Info("RabbitMQ user rotation detected",
+				"transportURL", transportURLID,
+				"oldSecret", credInfo.SecretName,
+				"newSecret", secretName,
 				"deploymentReady", isDeploymentReady)
 
 			// Preserve old version as previous
@@ -1208,10 +1219,11 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 			}
 		}
 
-		// Save back to status
-		instance.Status.ServiceCredentialStatus[secretName] = credInfo
+		// Save back to status using TransportURL as key
+		instance.Status.ServiceCredentialStatus[transportURLID] = credInfo
 
 		Log.Info("Updated RabbitMQ credential status",
+			"transportURL", transportURLID,
 			"secret", secretName,
 			"deploymentReady", isDeploymentReady,
 			"updatedNodes", len(credInfo.UpdatedNodes),
@@ -1495,6 +1507,41 @@ func (r *OpenStackDataPlaneNodeSetReconciler) bootstrapRabbitMQSecretsFromRabbit
 	}
 
 	return secrets, nil
+}
+
+// extractTransportURLFromSecretName extracts the TransportURL identifier from a
+// rabbitmq-user-* secret name.
+//
+// Secret name pattern: rabbitmq-user-{transporturl}-{username}-user
+// Example: rabbitmq-user-nova-cell1-transport-cell1user1-user
+//
+//	→ TransportURL: nova-cell1-transport
+//
+// This is used to detect rotation when a new user is created for the same TransportURL.
+func extractTransportURLFromSecretName(secretName string) string {
+	// Remove rabbitmq-user- prefix
+	if !strings.HasPrefix(secretName, rabbitmqUserSecretPrefix) {
+		return ""
+	}
+	remainder := strings.TrimPrefix(secretName, rabbitmqUserSecretPrefix)
+
+	// Secret format: {transporturl}-{username}-user
+	// We need to find where transporturl ends and username begins
+	// The suffix is always "-user", so remove it first
+	if !strings.HasSuffix(remainder, "-user") {
+		return ""
+	}
+	withoutSuffix := strings.TrimSuffix(remainder, "-user")
+
+	// Now we have: {transporturl}-{username}
+	// Find the last occurrence of "-" to split transporturl from username
+	lastDash := strings.LastIndex(withoutSuffix, "-")
+	if lastDash == -1 {
+		return ""
+	}
+
+	transportURL := withoutSuffix[:lastDash]
+	return transportURL
 }
 
 // getNodesCoveredByDeployment determines which nodes were covered by a deployment

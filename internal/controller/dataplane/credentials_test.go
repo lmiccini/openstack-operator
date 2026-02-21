@@ -461,3 +461,57 @@ func TestGetAllNodeNames(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractTransportURLFromSecretName(t *testing.T) {
+	tests := []struct {
+		name              string
+		secretName        string
+		expectedTransport string
+	}{
+		{
+			name:              "nova cell1 transport",
+			secretName:        "rabbitmq-user-nova-cell1-transport-cell1user1-user",
+			expectedTransport: "nova-cell1-transport",
+		},
+		{
+			name:              "nova cell1 transport with different user",
+			secretName:        "rabbitmq-user-nova-cell1-transport-cell1user2-user",
+			expectedTransport: "nova-cell1-transport",
+		},
+		{
+			name:              "neutron transport",
+			secretName:        "rabbitmq-user-neutron-transport-neutronuser-user",
+			expectedTransport: "neutron-transport",
+		},
+		{
+			name:              "nova api transport",
+			secretName:        "rabbitmq-user-nova-api-transport-apiuser-user",
+			expectedTransport: "nova-api-transport",
+		},
+		{
+			name:              "invalid prefix",
+			secretName:        "invalid-nova-cell1-transport-cell1user1-user",
+			expectedTransport: "",
+		},
+		{
+			name:              "no user suffix",
+			secretName:        "rabbitmq-user-nova-cell1-transport-cell1user1",
+			expectedTransport: "",
+		},
+		{
+			name:              "single character username",
+			secretName:        "rabbitmq-user-nova-cell1-transport-a-user",
+			expectedTransport: "nova-cell1-transport",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractTransportURLFromSecretName(tt.secretName)
+			if result != tt.expectedTransport {
+				t.Errorf("extractTransportURLFromSecretName(%q) = %q, want %q",
+					tt.secretName, result, tt.expectedTransport)
+			}
+		})
+	}
+}
