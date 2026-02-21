@@ -1073,15 +1073,23 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 		"coveredNodes", len(coveredNodes),
 		"needsBootstrap", needsBootstrap)
 
-	// Detect RabbitMQ secrets in this deployment
+	// Detect RabbitMQ secrets in this deployment by parsing transport_url from config secrets
 	rabbitmqSecrets, err := r.detectRabbitMQSecretsInDeployment(ctx, deployment, instance.Namespace)
 	if err != nil {
 		Log.Error(err, "Failed to detect RabbitMQ secrets in deployment")
 		return err
 	}
 
-	// If bootstrapping and no secrets found in deployment, introspect RabbitMQUsers
-	// to discover what credentials are actually in use
+	// Bootstrap fallback: If this is the first time tracking credentials (status is nil)
+	// and we couldn't find any in the deployment (empty result), fall back to introspecting
+	// RabbitMQUser CRs to discover what's currently deployed.
+	//
+	// This handles edge cases like:
+	// - Tracking operator deployed after deployments already completed
+	// - Old deployments that don't have config secrets with transport_url
+	// - Deployments were deleted but nodes still have credentials
+	//
+	// After bootstrap, future deployments will be tracked normally via transport_url parsing.
 	if needsBootstrap && len(rabbitmqSecrets) == 0 {
 		Log.Info("Bootstrapping: No RabbitMQ secrets in deployment, introspecting RabbitMQUser CRs",
 			"deployment", deployment.Name)
@@ -1391,9 +1399,21 @@ func (r *OpenStackDataPlaneNodeSetReconciler) findRabbitMQUserSecretByUsername(
 
 // bootstrapRabbitMQSecretsFromRabbitMQUsers discovers RabbitMQ user secrets by introspecting
 // RabbitMQUser CRs in the namespace. This is used ONLY during bootstrap (when serviceCredentialStatus
-// is nil) to discover what credentials are actually in use on the dataplane nodes.
+// is nil AND no secrets found in deployment) to discover what credentials are actually in use on
+// the dataplane nodes.
 //
-// Normal operation uses the simple naming convention approach (detectRabbitMQSecretsInDeployment).
+// Why this is needed:
+//   - Normal operation parses transport_url from config secrets in the deployment
+//   - But if the deployment was deleted, or tracking was deployed after deployments completed,
+//     we have no deployment to parse
+//   - Edge case: operator upgraded, old deployments exist but don't have the tracking logic yet
+//   - Bootstrap fills the gap by directly listing RabbitMQUser CRs to see what's currently deployed
+//
+// This is a one-time operation:
+// - Only runs when status is nil (first time seeing this nodeset)
+// - Only runs when deployment has no RabbitMQ secrets (can't parse from deployment)
+// - After bootstrap, normal transport_url parsing takes over
+// - Future deployments will be tracked via detectRabbitMQSecretsInDeployment()
 func (r *OpenStackDataPlaneNodeSetReconciler) bootstrapRabbitMQSecretsFromRabbitMQUsers(
 	ctx context.Context,
 	namespace string,
