@@ -17,6 +17,7 @@ package dataplane
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -48,10 +49,9 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 					Name:      "test-deployment",
 					Namespace: "test",
 				},
+				// Hash will be computed and set in test loop
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{
-						"nova-cell1-compute-config": "hash123",
-					},
+					SecretHashes: map[string]string{},
 				},
 			},
 			secrets: []corev1.Secret{
@@ -85,10 +85,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 					Namespace: "test",
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{
-						"nova-cell1-compute-config": "hash1",
-						"cert-my-cert":              "hash2",
-					},
+					SecretHashes: map[string]string{},
 				},
 			},
 			secrets: []corev1.Secret{
@@ -131,10 +128,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 					Namespace: "test",
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{
-						"nova-cell1-compute-config":         "hash1",
-						"neutron-ovn-metadata-agent-config": "hash2",
-					},
+					SecretHashes: map[string]string{},
 				},
 			},
 			secrets: []corev1.Secret{
@@ -190,9 +184,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 					Namespace: "test",
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{
-						"nova-cell1-compute-config": "hash123",
-					},
+					SecretHashes: map[string]string{},
 				},
 			},
 			secrets: []corev1.Secret{
@@ -236,6 +228,23 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 			// Create reconciler
 			reconciler := &OpenStackDataPlaneNodeSetReconciler{
 				Client: fakeClient,
+			}
+
+			// Compute and set secret hashes in deployment to match current secrets
+			// This simulates the deployment having deployed the current version
+			if tt.deployment != nil {
+				for i := range tt.secrets {
+					secret := &tt.secrets[i]
+					// Only compute hash for config secrets (not rabbitmq-user-* secrets)
+					if strings.HasPrefix(secret.Name, "rabbitmq-user-") {
+						continue
+					}
+					hash, err := util.ObjectHash(secret.Data)
+					if err != nil {
+						t.Fatalf("failed to compute hash for secret %s: %v", secret.Name, err)
+					}
+					tt.deployment.Status.SecretHashes[secret.Name] = hash
+				}
 			}
 
 			// Call detectRabbitMQSecretsInDeployment

@@ -1266,7 +1266,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
 	foundUsernames := make(map[string]bool)
 
 	// Scan all secrets in the deployment for transport_url fields
-	for secretName := range deployment.Status.SecretHashes {
+	for secretName, deploymentSecretHash := range deployment.Status.SecretHashes {
 		// Skip certificate secrets (optimization - they won't have transport_url)
 		if strings.HasPrefix(secretName, "cert-") {
 			continue
@@ -1284,6 +1284,23 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
 				continue
 			}
 			Log.Error(err, "Failed to get secret, skipping", "secret", secretName)
+			continue
+		}
+
+		// CRITICAL: Verify the deployment actually deployed this version of the secret
+		// Compute current secret hash and compare with deployment's hash
+		currentSecretHash, err := util.ObjectHash(secret.Data)
+		if err != nil {
+			Log.Error(err, "Failed to compute secret hash", "secret", secretName)
+			continue
+		}
+
+		if currentSecretHash != deploymentSecretHash {
+			// Deployment has old version of this secret, skip it
+			Log.V(1).Info("Deployment has old version of secret, skipping",
+				"secret", secretName,
+				"deploymentHash", deploymentSecretHash,
+				"currentHash", currentSecretHash)
 			continue
 		}
 
