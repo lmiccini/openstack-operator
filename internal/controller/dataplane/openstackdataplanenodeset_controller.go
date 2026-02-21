@@ -617,9 +617,18 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			}
 
 			// Update service credential tracking status BEFORE copying hashes
-			// Only update when this deployment is actually changing the config or secrets
-			// This prevents old deployments from updating status with current secrets they didn't deploy
-			if configHashChanged || secretsChanged {
+			// Track credentials when:
+			// 1. Config or secrets changed (normal case)
+			// 2. Status is empty (bootstrapping case - populate from existing ready deployments)
+			shouldTrackCredentials := configHashChanged || secretsChanged
+			if !shouldTrackCredentials && instance.Status.ServiceCredentialStatus == nil {
+				// Bootstrap: populate status from existing ready deployment
+				shouldTrackCredentials = true
+				helper.GetLogger().Info("Bootstrapping credential tracking from existing deployment",
+					"deployment", deployment.Name)
+			}
+
+			if shouldTrackCredentials {
 				if err := r.updateServiceCredentialStatus(ctx, instance, deployment); err != nil {
 					// This is a critical error - if we can't track credentials, RabbitMQ users
 					// could be deleted prematurely. Return error to retry.
