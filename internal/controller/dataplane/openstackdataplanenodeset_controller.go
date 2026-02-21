@@ -19,6 +19,7 @@ package dataplane
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -72,6 +73,12 @@ const (
 
 	// RabbitMQ user secret prefix
 	rabbitmqUserSecretPrefix = "rabbitmq-user-"
+)
+
+var (
+	// Regex to extract username from RabbitMQ transport_url
+	// Format: rabbit://USERNAME:PASSWORD@HOST:PORT/?params
+	transportURLUsernameRegex = regexp.MustCompile(`rabbit://([^:]+):`)
 )
 
 // OpenStackDataPlaneNodeSetReconciler reconciles a OpenStackDataPlaneNodeSet object
@@ -1214,9 +1221,15 @@ type RabbitMQSecretInfo struct {
 	secretHash string // hash of the secret
 }
 
-// detectRabbitMQSecretsInDeployment detects RabbitMQ credential secrets in a deployment.
-// Simplified approach: track all secrets with "rabbitmq-user-" prefix.
-// No regex parsing, no TransportURL listing, no service name inference.
+// detectRabbitMQSecretsInDeployment detects RabbitMQ credential secrets in a deployment
+// by parsing transport_url from config secrets.
+//
+// Algorithm:
+// 1. Scan all secrets in deployment.Status.SecretHashes
+// 2. Look for transport_url fields in secret data
+// 3. Extract username from transport_url using regex
+// 4. Find corresponding rabbitmq-user-* secret by listing and matching username
+// 5. Track those secrets
 func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
 	ctx context.Context,
 	deployment *dataplanev1.OpenStackDataPlaneDeployment,
@@ -1229,14 +1242,17 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
 		return secrets, nil
 	}
 
-	// Simply track all secrets that start with "rabbitmq-user-"
-	// This is the naming convention for RabbitMQ credential secrets
+	// Track usernames we've already found to avoid duplicates
+	foundUsernames := make(map[string]bool)
+
+	// Scan all secrets in the deployment for transport_url fields
 	for secretName := range deployment.Status.SecretHashes {
-		if !strings.HasPrefix(secretName, rabbitmqUserSecretPrefix) {
+		// Skip certificate secrets (optimization - they won't have transport_url)
+		if strings.HasPrefix(secretName, "cert-") {
 			continue
 		}
 
-		// Verify secret exists and get its hash
+		// Get the secret
 		secret := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{
 			Name:      secretName,
@@ -1244,32 +1260,133 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
 		}, secret)
 		if err != nil {
 			if k8s_errors.IsNotFound(err) {
-				Log.V(1).Info("RabbitMQ secret not found, skipping", "secret", secretName)
+				Log.V(1).Info("Secret not found, skipping", "secret", secretName)
 				continue
 			}
-			// Log error but continue to avoid failing entire detection due to transient errors
-			Log.Error(err, "Failed to get RabbitMQ secret, skipping", "secret", secretName)
+			Log.Error(err, "Failed to get secret, skipping", "secret", secretName)
 			continue
 		}
 
-		// Compute hash of the actual secret data
-		rabbitmqSecretHash, err := util.ObjectHash(secret.Data)
-		if err != nil {
-			Log.Error(err, "Failed to compute RabbitMQ secret hash, skipping", "secret", secretName)
-			continue
-		}
+		// Scan all fields in secret data for transport_url
+		for key, value := range secret.Data {
+			valueStr := string(value)
 
-		secrets[secretName] = RabbitMQSecretInfo{
-			secretName: secretName,
-			secretHash: rabbitmqSecretHash,
-		}
+			// Look for transport_url in this field
+			if !strings.Contains(valueStr, "transport_url=") {
+				continue
+			}
 
-		Log.V(1).Info("Detected RabbitMQ credential secret in deployment",
-			"secret", secretName,
-			"hash", rabbitmqSecretHash)
+			// Extract username from transport_url using regex
+			matches := transportURLUsernameRegex.FindStringSubmatch(valueStr)
+			if len(matches) < 2 {
+				Log.V(1).Info("Could not extract username from transport_url",
+					"secret", secretName,
+					"field", key)
+				continue
+			}
+
+			username := matches[1]
+
+			// Skip if we already found this username
+			if foundUsernames[username] {
+				continue
+			}
+			foundUsernames[username] = true
+
+			Log.V(1).Info("Found RabbitMQ username in deployment",
+				"username", username,
+				"secret", secretName,
+				"field", key)
+
+			// Find the rabbitmq-user-* secret for this username
+			rabbitMQUserSecret, err := r.findRabbitMQUserSecretByUsername(ctx, namespace, username)
+			if err != nil {
+				Log.Error(err, "Failed to find RabbitMQ user secret for username",
+					"username", username)
+				continue
+			}
+			if rabbitMQUserSecret == "" {
+				Log.V(1).Info("No RabbitMQ user secret found for username",
+					"username", username)
+				continue
+			}
+
+			// Get the secret to compute hash
+			userSecret := &corev1.Secret{}
+			err = r.Get(ctx, types.NamespacedName{
+				Name:      rabbitMQUserSecret,
+				Namespace: namespace,
+			}, userSecret)
+			if err != nil {
+				if k8s_errors.IsNotFound(err) {
+					Log.Info("RabbitMQ user secret not found",
+						"secret", rabbitMQUserSecret)
+					continue
+				}
+				Log.Error(err, "Failed to get RabbitMQ user secret",
+					"secret", rabbitMQUserSecret)
+				continue
+			}
+
+			// Compute hash
+			rabbitmqSecretHash, err := util.ObjectHash(userSecret.Data)
+			if err != nil {
+				Log.Error(err, "Failed to compute RabbitMQ secret hash",
+					"secret", rabbitMQUserSecret)
+				continue
+			}
+
+			secrets[rabbitMQUserSecret] = RabbitMQSecretInfo{
+				secretName: rabbitMQUserSecret,
+				secretHash: rabbitmqSecretHash,
+			}
+
+			Log.Info("Detected RabbitMQ credential in deployment",
+				"username", username,
+				"secret", rabbitMQUserSecret,
+				"hash", rabbitmqSecretHash)
+		}
 	}
 
 	return secrets, nil
+}
+
+// findRabbitMQUserSecretByUsername finds the rabbitmq-user-* secret name for a given username.
+// It lists all secrets with the rabbitmq-user- prefix and checks their username field.
+func (r *OpenStackDataPlaneNodeSetReconciler) findRabbitMQUserSecretByUsername(
+	ctx context.Context,
+	namespace string,
+	username string,
+) (string, error) {
+	Log := r.GetLogger(ctx)
+
+	// List all secrets in the namespace
+	secretList := &corev1.SecretList{}
+	if err := r.List(ctx, secretList, client.InNamespace(namespace)); err != nil {
+		return "", fmt.Errorf("failed to list secrets: %w", err)
+	}
+
+	// Find secret with rabbitmq-user- prefix that has this username
+	for i := range secretList.Items {
+		secret := &secretList.Items[i]
+
+		// Only check rabbitmq-user-* secrets
+		if !strings.HasPrefix(secret.Name, rabbitmqUserSecretPrefix) {
+			continue
+		}
+
+		// Check if this secret has the username we're looking for
+		if secretUsername, ok := secret.Data["username"]; ok {
+			if string(secretUsername) == username {
+				Log.V(1).Info("Found matching RabbitMQ user secret",
+					"username", username,
+					"secret", secret.Name)
+				return secret.Name, nil
+			}
+		}
+	}
+
+	return "", nil
 }
 
 // bootstrapRabbitMQSecretsFromRabbitMQUsers discovers RabbitMQ user secrets by introspecting

@@ -42,7 +42,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 			wantSecrets: []string{},
 		},
 		{
-			name: "detect single rabbitmq-user secret",
+			name: "detect rabbitmq-user from transport_url in config",
 			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
@@ -50,11 +50,20 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
 					SecretHashes: map[string]string{
-						"rabbitmq-user-nova-cell1-transport-novacell1-11-user": "hash123",
+						"nova-cell1-compute-config": "hash123",
 					},
 				},
 			},
 			secrets: []corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "nova-cell1-compute-config",
+						Namespace: "test",
+					},
+					Data: map[string][]byte{
+						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
+					},
+				},
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "rabbitmq-user-nova-cell1-transport-novacell1-11-user",
@@ -69,7 +78,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 			wantSecrets: []string{"rabbitmq-user-nova-cell1-transport-novacell1-11-user"},
 		},
 		{
-			name: "skip non-rabbitmq secrets",
+			name: "skip non-transport_url secrets",
 			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
@@ -77,13 +86,30 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
 					SecretHashes: map[string]string{
-						"nova-cell1-compute-config":                            "hash1",
-						"rabbitmq-user-nova-cell1-transport-novacell1-11-user": "hash2",
-						"cert-my-cert": "hash3",
+						"nova-cell1-compute-config": "hash1",
+						"cert-my-cert":              "hash2",
 					},
 				},
 			},
 			secrets: []corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "nova-cell1-compute-config",
+						Namespace: "test",
+					},
+					Data: map[string][]byte{
+						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "cert-my-cert",
+						Namespace: "test",
+					},
+					Data: map[string][]byte{
+						"cert.pem": []byte("certificate data"),
+					},
+				},
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "rabbitmq-user-nova-cell1-transport-novacell1-11-user",
@@ -98,7 +124,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 			wantSecrets: []string{"rabbitmq-user-nova-cell1-transport-novacell1-11-user"},
 		},
 		{
-			name: "detect multiple rabbitmq-user secrets",
+			name: "detect multiple rabbitmq-user from multiple configs",
 			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
@@ -106,12 +132,30 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
 					SecretHashes: map[string]string{
-						"rabbitmq-user-nova-cell1-transport-novacell1-11-user": "hash1",
-						"rabbitmq-user-neutron-transport-neutron-5-user":       "hash2",
+						"nova-cell1-compute-config":         "hash1",
+						"neutron-ovn-metadata-agent-config": "hash2",
 					},
 				},
 			},
 			secrets: []corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "nova-cell1-compute-config",
+						Namespace: "test",
+					},
+					Data: map[string][]byte{
+						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "neutron-ovn-metadata-agent-config",
+						Namespace: "test",
+					},
+					Data: map[string][]byte{
+						"neutron.conf": []byte("transport_url=rabbit://neutron-5:password@host:5671/?ssl=1"),
+					},
+				},
 				{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "rabbitmq-user-nova-cell1-transport-novacell1-11-user",
@@ -139,7 +183,7 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 			},
 		},
 		{
-			name: "skip if secret not found",
+			name: "skip if rabbitmq-user secret not found",
 			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-deployment",
@@ -147,12 +191,23 @@ func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
 				},
 				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
 					SecretHashes: map[string]string{
-						"rabbitmq-user-nova-cell1-transport-novacell1-11-user": "hash123",
+						"nova-cell1-compute-config": "hash123",
 					},
 				},
 			},
-			secrets:     []corev1.Secret{}, // Secret doesn't exist
-			wantSecrets: []string{},        // Should skip gracefully
+			secrets: []corev1.Secret{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "nova-cell1-compute-config",
+						Namespace: "test",
+					},
+					Data: map[string][]byte{
+						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
+					},
+				},
+				// rabbitmq-user secret doesn't exist
+			},
+			wantSecrets: []string{}, // Should skip gracefully
 		},
 	}
 
