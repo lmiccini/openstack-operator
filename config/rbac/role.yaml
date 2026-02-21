@@ -607,14 +607,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - rabbitmq.openstack.org
-  resources:
-  - transporturls
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterrolebindings

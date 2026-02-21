@@ -169,12 +169,22 @@ type OpenStackDataPlaneNodeSetStatus struct {
 
 // ServiceCredentialInfo tracks credential deployment status for a specific service
 type ServiceCredentialInfo struct {
-	// SecretName is the name of the secret containing credentials (e.g., "nova-cell0-transport")
+	// SecretName is the name of the secret containing current credentials (e.g., "rabbitmq-user-nova-cell1-transport-novacell1-11-user")
 	SecretName string `json:"secretName,omitempty"`
 
 	// SecretHash is the hash of the current secret data
 	// This is compared against deployment.Status.SecretHashes to determine version
 	SecretHash string `json:"secretHash,omitempty"`
+
+	// PreviousSecretName is the name of the previous credential secret during rotation
+	// This field is populated when a new credential version is deployed but not all nodes have it yet.
+	// It allows RabbitMQ controller to know that old credentials are still in use and should not be deleted.
+	// Cleared when AllNodesUpdated becomes true for the current version.
+	PreviousSecretName string `json:"previousSecretName,omitempty"`
+
+	// PreviousSecretHash is the hash of the previous credential secret during rotation
+	// Used by RabbitMQ controller to verify if old credentials are still tracked and in use.
+	PreviousSecretHash string `json:"previousSecretHash,omitempty"`
 
 	// UpdatedNodes lists the nodes that have been updated with this secret hash
 	// This is populated as deployments complete, tracking actual rollout progress
