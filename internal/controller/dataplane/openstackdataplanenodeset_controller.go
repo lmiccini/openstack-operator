@@ -48,6 +48,7 @@ import (
 
 	"github.com/go-logr/logr"
 	infranetworkv1 "github.com/openstack-k8s-operators/infra-operator/apis/network/v1beta1"
+	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
 	condition "github.com/openstack-k8s-operators/lib-common/modules/common/condition"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/helper"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/rolebinding"
@@ -139,6 +140,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) GetLogger(ctx context.Context) log
 // +kubebuilder:rbac:groups="config.openshift.io",resources=imagedigestmirrorsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="config.openshift.io",resources=images,verbs=get;list;watch
 // +kubebuilder:rbac:groups="machineconfiguration.openshift.io",resources=machineconfigs,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rabbitmq.openstack.org,resources=rabbitmqusers,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -1042,6 +1044,9 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 	// Check if deployment is ready
 	isDeploymentReady := deployment.Status.Conditions.IsTrue(condition.DeploymentReadyCondition)
 
+	// Check if we need to bootstrap (status is nil)
+	needsBootstrap := instance.Status.ServiceCredentialStatus == nil
+
 	// Initialize map if needed
 	if instance.Status.ServiceCredentialStatus == nil {
 		instance.Status.ServiceCredentialStatus = make(map[string]dataplanev1.ServiceCredentialInfo)
@@ -1058,13 +1063,33 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 		"deployment", deployment.Name,
 		"deploymentReady", isDeploymentReady,
 		"totalNodes", totalNodes,
-		"coveredNodes", len(coveredNodes))
+		"coveredNodes", len(coveredNodes),
+		"needsBootstrap", needsBootstrap)
 
 	// Detect RabbitMQ secrets in this deployment
 	rabbitmqSecrets, err := r.detectRabbitMQSecretsInDeployment(ctx, deployment, instance.Namespace)
 	if err != nil {
 		Log.Error(err, "Failed to detect RabbitMQ secrets in deployment")
 		return err
+	}
+
+	// If bootstrapping and no secrets found in deployment, introspect RabbitMQUsers
+	// to discover what credentials are actually in use
+	if needsBootstrap && len(rabbitmqSecrets) == 0 {
+		Log.Info("Bootstrapping: No RabbitMQ secrets in deployment, introspecting RabbitMQUser CRs",
+			"deployment", deployment.Name)
+
+		bootstrapSecrets, err := r.bootstrapRabbitMQSecretsFromRabbitMQUsers(ctx, instance.Namespace)
+		if err != nil {
+			Log.Error(err, "Failed to bootstrap RabbitMQ secrets from RabbitMQUser CRs")
+			return err
+		}
+
+		if len(bootstrapSecrets) > 0 {
+			Log.Info("Bootstrap discovered RabbitMQ credentials from RabbitMQUser CRs",
+				"count", len(bootstrapSecrets))
+			rabbitmqSecrets = bootstrapSecrets
+		}
 	}
 
 	// Track each RabbitMQ secret (uses secret name as key for tracking)
@@ -1240,6 +1265,94 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
 		}
 
 		Log.V(1).Info("Detected RabbitMQ credential secret in deployment",
+			"secret", secretName,
+			"hash", rabbitmqSecretHash)
+	}
+
+	return secrets, nil
+}
+
+// bootstrapRabbitMQSecretsFromRabbitMQUsers discovers RabbitMQ user secrets by introspecting
+// RabbitMQUser CRs in the namespace. This is used ONLY during bootstrap (when serviceCredentialStatus
+// is nil) to discover what credentials are actually in use on the dataplane nodes.
+//
+// Normal operation uses the simple naming convention approach (detectRabbitMQSecretsInDeployment).
+func (r *OpenStackDataPlaneNodeSetReconciler) bootstrapRabbitMQSecretsFromRabbitMQUsers(
+	ctx context.Context,
+	namespace string,
+) (map[string]RabbitMQSecretInfo, error) {
+	Log := r.GetLogger(ctx)
+	secrets := make(map[string]RabbitMQSecretInfo)
+
+	Log.Info("Bootstrapping RabbitMQ credential tracking from RabbitMQUser CRs", "namespace", namespace)
+
+	// List all RabbitMQUser CRs in the namespace
+	rabbitMQUserList := &rabbitmqv1.RabbitMQUserList{}
+	if err := r.List(ctx, rabbitMQUserList, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("failed to list RabbitMQUsers for bootstrap: %w", err)
+	}
+
+	Log.Info("Found RabbitMQUsers during bootstrap", "count", len(rabbitMQUserList.Items))
+
+	// Extract RabbitMQ user secrets from each RabbitMQUser
+	for i := range rabbitMQUserList.Items {
+		rabbitMQUser := &rabbitMQUserList.Items[i]
+
+		// Get the RabbitMQ user secret name from the RabbitMQUser status
+		secretName := rabbitMQUser.Status.SecretName
+		if secretName == "" {
+			Log.V(1).Info("RabbitMQUser has no secret name in status, skipping",
+				"rabbitMQUser", rabbitMQUser.Name)
+			continue
+		}
+
+		// Only track RabbitMQ user secrets (follow naming convention for safety)
+		if !strings.HasPrefix(secretName, rabbitmqUserSecretPrefix) {
+			Log.V(1).Info("Secret is not a RabbitMQ user secret, skipping",
+				"rabbitMQUser", rabbitMQUser.Name,
+				"secret", secretName)
+			continue
+		}
+
+		// Skip if we already found this secret
+		if _, exists := secrets[secretName]; exists {
+			continue
+		}
+
+		// Get the secret to compute its hash
+		secret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      secretName,
+			Namespace: namespace,
+		}, secret)
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				Log.Info("RabbitMQ secret referenced by RabbitMQUser not found, skipping",
+					"rabbitMQUser", rabbitMQUser.Name,
+					"secret", secretName)
+				continue
+			}
+			Log.Error(err, "Failed to get RabbitMQ secret during bootstrap, skipping",
+				"rabbitMQUser", rabbitMQUser.Name,
+				"secret", secretName)
+			continue
+		}
+
+		// Compute hash of the secret data
+		rabbitmqSecretHash, err := util.ObjectHash(secret.Data)
+		if err != nil {
+			Log.Error(err, "Failed to compute RabbitMQ secret hash during bootstrap, skipping",
+				"secret", secretName)
+			continue
+		}
+
+		secrets[secretName] = RabbitMQSecretInfo{
+			secretName: secretName,
+			secretHash: rabbitmqSecretHash,
+		}
+
+		Log.Info("Discovered RabbitMQ credential during bootstrap",
+			"rabbitMQUser", rabbitMQUser.Name,
 			"secret", secretName,
 			"hash", rabbitmqSecretHash)
 	}
