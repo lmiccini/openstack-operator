@@ -1351,10 +1351,10 @@ func computeDeploymentSummary(
 	configMapName string,
 ) *dataplanev1.SecretDeploymentStatus {
 	// Check if any secret has drift (Current != Expected)
+	// Don't use hash - only ResourceVersion/Generation are deterministic
 	hasDrift := false
 	for _, secretInfo := range data.Secrets {
-		if secretInfo.CurrentHash != secretInfo.ExpectedHash ||
-			secretInfo.CurrentResourceVersion != secretInfo.ExpectedResourceVersion ||
+		if secretInfo.CurrentResourceVersion != secretInfo.ExpectedResourceVersion ||
 			secretInfo.CurrentGeneration != secretInfo.ExpectedGeneration {
 			hasDrift = true
 			break
