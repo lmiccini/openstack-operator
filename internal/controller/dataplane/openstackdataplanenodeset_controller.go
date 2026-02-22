@@ -536,9 +536,6 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 		latestRelevantDeployment = relevantDeployments[len(relevantDeployments)-1]
 	}
 
-	// Track if we updated tracking in this reconciliation (for drift detection skip logic)
-	updatedTrackingInThisReconciliation := false
-
 	for _, deployment := range relevantDeployments {
 		// Always add to DeploymentStatuses (for visibility)
 		deploymentConditions := deployment.Status.NodeSetConditions[instance.Name]
@@ -646,7 +643,6 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 					helper.GetLogger().Error(err, "Failed to update secret deployment tracking")
 					return false, false, false, "", err
 				}
-				updatedTrackingInThisReconciliation = true
 			}
 
 			// Now copy the hashes to nodeset status
@@ -702,16 +698,10 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	// but status still shows AllNodesUpdated=true (e.g., new RabbitMQUser created
 	// before deployment runs).
 	//
-	// Skip drift detection if tracking was just updated in THIS reconciliation due to a deployment,
-	// because deployment.Status.SecretHashes may be stale compared to current cluster secrets
-	// (e.g., cert-manager rotated certs after deployment completed).
-	skipDrift := updatedTrackingInThisReconciliation
-
-	if skipDrift {
-		helper.GetLogger().Info("Skipping drift detection - tracking was updated in this reconciliation")
-	}
-
-	if instance.Status.SecretDeployment != nil && !skipDrift {
+	// Always run drift detection - even if tracking was just updated, secrets may have
+	// changed during the deployment (e.g., cert-manager rotating certs), and we should
+	// detect this as drift requiring a new deployment.
+	if instance.Status.SecretDeployment != nil {
 		// Load current tracking data
 		trackingData, err := r.getSecretTrackingData(ctx, helper, instance)
 		if err != nil {
