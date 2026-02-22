@@ -1654,7 +1654,6 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 			Namespace: instance.Namespace,
 		}, secret)
 
-		var expectedHash string
 		var expectedResourceVersion string
 		var expectedGeneration int64
 
@@ -1664,7 +1663,6 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 				Log.Info("Secret drift detected: secret deleted from cluster",
 					"secret", secretName,
 					"currentResourceVersion", secretInfo.CurrentResourceVersion)
-				expectedHash = ""
 				expectedResourceVersion = ""
 				expectedGeneration = 0
 				driftDetected = true
@@ -1675,32 +1673,22 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 				return true, err
 			}
 		} else {
-			// Compute hash and get metadata
-			var hashErr error
-			expectedHash, hashErr = util.ObjectHash(secret.Data)
-			if hashErr != nil {
-				Log.Error(hashErr, "Failed to hash secret for drift detection",
-					"secret", secretName)
-				return true, hashErr
-			}
+			// Get metadata - no hash needed, use ResourceVersion/Generation
 			expectedResourceVersion = secret.ResourceVersion
 			expectedGeneration = secret.Generation
 		}
 
 		// Update Expected in tracking (for next comparison)
-		secretInfo.ExpectedHash = expectedHash
 		secretInfo.ExpectedResourceVersion = expectedResourceVersion
 		secretInfo.ExpectedGeneration = expectedGeneration
 		trackingData.Secrets[secretName] = secretInfo
 
-		// Compare Expected (cluster) vs Current (deployed)
+		// Compare Expected (cluster) vs Current (deployed) using deterministic K8s metadata
+		// Don't use hash - util.ObjectHash is non-deterministic due to map iteration order
 		if expectedResourceVersion != secretInfo.CurrentResourceVersion ||
-			expectedGeneration != secretInfo.CurrentGeneration ||
-			expectedHash != secretInfo.CurrentHash {
+			expectedGeneration != secretInfo.CurrentGeneration {
 			Log.Info("Secret drift detected: cluster secret differs from deployed version",
 				"secret", secretName,
-				"currentHash", secretInfo.CurrentHash,
-				"expectedHash", expectedHash,
 				"currentResourceVersion", secretInfo.CurrentResourceVersion,
 				"expectedResourceVersion", expectedResourceVersion,
 				"currentGeneration", secretInfo.CurrentGeneration,
