@@ -18,8 +18,8 @@ package dataplane
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -49,8 +49,8 @@ import (
 
 	"github.com/go-logr/logr"
 	infranetworkv1 "github.com/openstack-k8s-operators/infra-operator/apis/network/v1beta1"
-	rabbitmqv1 "github.com/openstack-k8s-operators/infra-operator/apis/rabbitmq/v1beta1"
 	condition "github.com/openstack-k8s-operators/lib-common/modules/common/condition"
+	"github.com/openstack-k8s-operators/lib-common/modules/common/configmap"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/helper"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/rolebinding"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
@@ -70,15 +70,6 @@ const (
 	AnsibleSSHPrivateKey = "ssh-privatekey"
 	// AnsibleSSHAuthorizedKeys authorized keys
 	AnsibleSSHAuthorizedKeys = "authorized_keys"
-
-	// RabbitMQ user secret prefix
-	rabbitmqUserSecretPrefix = "rabbitmq-user-"
-)
-
-var (
-	// Regex to extract username from RabbitMQ transport_url
-	// Format: rabbit://USERNAME:PASSWORD@HOST:PORT/?params
-	transportURLUsernameRegex = regexp.MustCompile(`rabbit://([^:]+):`)
 )
 
 // OpenStackDataPlaneNodeSetReconciler reconciles a OpenStackDataPlaneNodeSet object
@@ -625,23 +616,13 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 				}
 			}
 
-			// Update service credential tracking status BEFORE copying hashes
-			// Track credentials when:
+			// Update secret deployment tracking BEFORE copying hashes
+			// Track secrets when:
 			// 1. Config or secrets changed (normal case)
-			// 2. Status is empty (bootstrapping case - populate from existing ready deployments)
-			shouldTrackCredentials := configHashChanged || secretsChanged
-			if !shouldTrackCredentials && instance.Status.ServiceCredentialStatus == nil {
-				// Bootstrap: populate status from existing ready deployment
-				shouldTrackCredentials = true
-				helper.GetLogger().Info("Bootstrapping credential tracking from existing deployment",
-					"deployment", deployment.Name)
-			}
-
-			if shouldTrackCredentials {
-				if err := r.updateServiceCredentialStatus(ctx, instance, deployment); err != nil {
-					// This is a critical error - if we can't track credentials, RabbitMQ users
-					// could be deleted prematurely. Return error to retry.
-					helper.GetLogger().Error(err, "Failed to update service credential status")
+			// 2. Status is empty (first-time tracking)
+			if configHashChanged || secretsChanged || instance.Status.SecretDeployment == nil {
+				if err := r.updateSecretDeploymentTracking(ctx, helper, instance, deployment); err != nil {
+					helper.GetLogger().Error(err, "Failed to update secret deployment tracking")
 					return false, false, false, "", err
 				}
 			}
@@ -1028,16 +1009,146 @@ func checkAnsibleVarsFromChanged(
 	return false, nil
 }
 
-// updateServiceCredentialStatus updates the NodeSet status with information about which
-// nodes have been updated with RabbitMQ credentials from a deployment.
-//
-// This status is read by infra-operator's RabbitMQUser controller to determine when
-// old credentials can be safely deleted during rotation.
-//
-// BUG FIX: Tracks both current AND previous credential versions during rotation to prevent
-// premature deletion. The previous version is preserved until all nodes have the new version.
-func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
+// SecretTrackingData represents the structure stored in the secret tracking ConfigMap
+type SecretTrackingData struct {
+	Secrets    map[string]SecretVersionInfo `json:"secrets"`
+	NodeStatus map[string]NodeSecretStatus  `json:"nodeStatus"`
+}
+
+// SecretVersionInfo tracks a secret's current and previous versions across nodes
+type SecretVersionInfo struct {
+	CurrentHash       string    `json:"currentHash"`
+	PreviousHash      string    `json:"previousHash,omitempty"`
+	NodesWithCurrent  []string  `json:"nodesWithCurrent"`
+	NodesWithPrevious []string  `json:"nodesWithPrevious,omitempty"`
+	LastChanged       time.Time `json:"lastChanged"`
+}
+
+// NodeSecretStatus tracks which secrets a node has (current version)
+type NodeSecretStatus struct {
+	AllSecretsUpdated   bool     `json:"allSecretsUpdated"`
+	SecretsWithCurrent  []string `json:"secretsWithCurrent"`
+	SecretsWithPrevious []string `json:"secretsWithPrevious,omitempty"`
+}
+
+// getSecretTrackingConfigMapName returns the name of the tracking ConfigMap for a nodeset
+func getSecretTrackingConfigMapName(nodesetName string) string {
+	return fmt.Sprintf("%s-secret-tracking", nodesetName)
+}
+
+// getSecretTrackingData reads and parses the secret tracking data from the ConfigMap
+func (r *OpenStackDataPlaneNodeSetReconciler) getSecretTrackingData(
 	ctx context.Context,
+	helper *helper.Helper,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+) (*SecretTrackingData, error) {
+	configMapName := getSecretTrackingConfigMapName(instance.Name)
+
+	cm := &corev1.ConfigMap{}
+	err := helper.GetClient().Get(ctx, types.NamespacedName{
+		Name:      configMapName,
+		Namespace: instance.Namespace,
+	}, cm)
+
+	if err != nil {
+		if k8s_errors.IsNotFound(err) {
+			// ConfigMap doesn't exist yet, return empty structure
+			return &SecretTrackingData{
+				Secrets:    make(map[string]SecretVersionInfo),
+				NodeStatus: make(map[string]NodeSecretStatus),
+			}, nil
+		}
+		return nil, err
+	}
+
+	// Parse JSON from tracking.json key
+	trackingJSON, exists := cm.Data["tracking.json"]
+	if !exists || trackingJSON == "" {
+		// Empty ConfigMap, return empty structure
+		return &SecretTrackingData{
+			Secrets:    make(map[string]SecretVersionInfo),
+			NodeStatus: make(map[string]NodeSecretStatus),
+		}, nil
+	}
+
+	var data SecretTrackingData
+	if err := json.Unmarshal([]byte(trackingJSON), &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tracking data: %w", err)
+	}
+
+	// Ensure maps are initialized
+	if data.Secrets == nil {
+		data.Secrets = make(map[string]SecretVersionInfo)
+	}
+	if data.NodeStatus == nil {
+		data.NodeStatus = make(map[string]NodeSecretStatus)
+	}
+
+	return &data, nil
+}
+
+// saveSecretTrackingData marshals and saves the tracking data to the ConfigMap
+func (r *OpenStackDataPlaneNodeSetReconciler) saveSecretTrackingData(
+	ctx context.Context,
+	helper *helper.Helper,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	data *SecretTrackingData,
+) error {
+	configMapName := getSecretTrackingConfigMapName(instance.Name)
+
+	// Marshal to JSON
+	trackingJSON, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal tracking data: %w", err)
+	}
+
+	customData := map[string]string{
+		"tracking.json": string(trackingJSON),
+	}
+
+	cms := []util.Template{
+		{
+			Name:         configMapName,
+			Namespace:    instance.Namespace,
+			InstanceType: instance.Kind,
+			CustomData:   customData,
+		},
+	}
+
+	return configmap.EnsureConfigMaps(ctx, helper, instance, cms, nil)
+}
+
+// computeDeploymentSummary calculates summary status from detailed tracking data
+func computeDeploymentSummary(
+	data *SecretTrackingData,
+	totalNodes int,
+	configMapName string,
+) *dataplanev1.SecretDeploymentStatus {
+	updatedNodes := 0
+	for _, nodeStatus := range data.NodeStatus {
+		if nodeStatus.AllSecretsUpdated {
+			updatedNodes++
+		}
+	}
+
+	now := v1.Now()
+	return &dataplanev1.SecretDeploymentStatus{
+		AllNodesUpdated: updatedNodes == totalNodes && totalNodes > 0,
+		TotalNodes:      totalNodes,
+		UpdatedNodes:    updatedNodes,
+		ConfigMapName:   configMapName,
+		LastUpdateTime:  &now,
+	}
+}
+
+// updateSecretDeploymentTracking updates the NodeSet status with information about which
+// nodes have been updated with secrets from a deployment.
+//
+// This tracks ALL secrets in deployment.Status.SecretHashes, storing detailed per-secret
+// tracking in a ConfigMap and summary metrics in the CR status.
+func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
+	ctx context.Context,
+	helper *helper.Helper,
 	instance *dataplanev1.OpenStackDataPlaneNodeSet,
 	deployment *dataplanev1.OpenStackDataPlaneDeployment,
 ) error {
@@ -1051,14 +1162,6 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 	// Check if deployment is ready
 	isDeploymentReady := deployment.Status.Conditions.IsTrue(condition.DeploymentReadyCondition)
 
-	// Check if we need to bootstrap (status is nil)
-	needsBootstrap := instance.Status.ServiceCredentialStatus == nil
-
-	// Initialize map if needed
-	if instance.Status.ServiceCredentialStatus == nil {
-		instance.Status.ServiceCredentialStatus = make(map[string]dataplanev1.ServiceCredentialInfo)
-	}
-
 	// Get all nodes in this nodeset
 	allNodes := getAllNodeNames(instance)
 	totalNodes := len(allNodes)
@@ -1066,499 +1169,132 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateServiceCredentialStatus(
 	// Determine which nodes were covered by this deployment (handle AnsibleLimit)
 	coveredNodes := getNodesCoveredByDeployment(deployment, instance)
 
-	Log.Info("Updating RabbitMQ credential status",
+	Log.Info("Updating secret deployment tracking",
 		"deployment", deployment.Name,
 		"deploymentReady", isDeploymentReady,
 		"totalNodes", totalNodes,
 		"coveredNodes", len(coveredNodes),
-		"needsBootstrap", needsBootstrap)
+		"secretsInDeployment", len(deployment.Status.SecretHashes))
 
-	// Detect RabbitMQ secrets in this deployment by parsing transport_url from config secrets
-	rabbitmqSecrets, err := r.detectRabbitMQSecretsInDeployment(ctx, deployment, instance.Namespace)
+	// Load existing tracking data
+	trackingData, err := r.getSecretTrackingData(ctx, helper, instance)
 	if err != nil {
-		Log.Error(err, "Failed to detect RabbitMQ secrets in deployment")
+		Log.Error(err, "Failed to load secret tracking data")
 		return err
 	}
 
-	// Bootstrap fallback: If this is the first time tracking credentials (status is nil)
-	// and we couldn't find any in the deployment (empty result), fall back to introspecting
-	// RabbitMQUser CRs to discover what's currently deployed.
-	//
-	// This handles edge cases like:
-	// - Tracking operator deployed after deployments already completed
-	// - Old deployments that don't have config secrets with transport_url
-	// - Deployments were deleted but nodes still have credentials
-	//
-	// After bootstrap, future deployments will be tracked normally via transport_url parsing.
-	if needsBootstrap && len(rabbitmqSecrets) == 0 {
-		Log.Info("Bootstrapping: No RabbitMQ secrets in deployment, introspecting RabbitMQUser CRs",
-			"deployment", deployment.Name)
-
-		bootstrapSecrets, err := r.bootstrapRabbitMQSecretsFromRabbitMQUsers(ctx, instance.Namespace)
-		if err != nil {
-			Log.Error(err, "Failed to bootstrap RabbitMQ secrets from RabbitMQUser CRs")
-			return err
-		}
-
-		if len(bootstrapSecrets) > 0 {
-			Log.Info("Bootstrap discovered RabbitMQ credentials from RabbitMQUser CRs",
-				"count", len(bootstrapSecrets))
-			rabbitmqSecrets = bootstrapSecrets
-		}
-	}
-
-	// Track each RabbitMQ secret using TransportURL identifier as key (not secret name)
-	// This enables automatic rotation detection: when a new user is created for the same
-	// TransportURL, we move the old credential to Previous* fields
-	for secretName, secretInfo := range rabbitmqSecrets {
-		// Extract TransportURL identifier from secret name to use as tracking key
-		// Example: rabbitmq-user-nova-cell1-transport-cell1user2-user → nova-cell1-transport
-		transportURLID := extractTransportURLFromSecretName(secretName)
-		if transportURLID == "" {
-			Log.Error(fmt.Errorf("failed to extract TransportURL from secret name"), "",
-				"secret", secretName)
-			continue
-		}
-
-		// Use TransportURL as key for status map
-		credInfo, exists := instance.Status.ServiceCredentialStatus[transportURLID]
+	// Process each secret in the deployment
+	for secretName, secretHash := range deployment.Status.SecretHashes {
+		secretInfo, exists := trackingData.Secrets[secretName]
 
 		if !exists {
-			// First time seeing this TransportURL
-			updatedNodes := []string{}
+			// First time seeing this secret
+			nodesWithCurrent := []string{}
 			if isDeploymentReady {
-				updatedNodes = coveredNodes
+				nodesWithCurrent = coveredNodes
 			}
 
-			credInfo = dataplanev1.ServiceCredentialInfo{
-				SecretName:      secretName,
-				SecretHash:      secretInfo.secretHash,
-				UpdatedNodes:    updatedNodes,
-				TotalNodes:      totalNodes,
-				AllNodesUpdated: isDeploymentReady && (len(updatedNodes) == totalNodes),
+			secretInfo = SecretVersionInfo{
+				CurrentHash:      secretHash,
+				NodesWithCurrent: nodesWithCurrent,
+				LastChanged:      time.Now(),
 			}
 
-			Log.Info("New RabbitMQ credential detected",
-				"transportURL", transportURLID,
+			Log.Info("New secret detected",
 				"secret", secretName,
+				"hash", secretHash,
 				"deploymentReady", isDeploymentReady,
-				"updatedNodes", len(updatedNodes))
+				"nodesWithCurrent", len(nodesWithCurrent))
 
-		} else if credInfo.SecretName != secretName {
-			// CREDENTIAL ROTATION: Different secret (new user) for same TransportURL
-			// BUG FIX: Save current as previous BEFORE updating to new version
-			// This prevents old credentials from becoming invisible to RabbitMQ controller
+		} else if secretInfo.CurrentHash != secretHash {
+			// SECRET ROTATION: Hash changed for existing secret
+			// Preserve old version as previous
 
-			Log.Info("RabbitMQ user rotation detected",
-				"transportURL", transportURLID,
-				"oldSecret", credInfo.SecretName,
-				"newSecret", secretName,
+			Log.Info("Secret rotation detected",
+				"secret", secretName,
+				"oldHash", secretInfo.CurrentHash,
+				"newHash", secretHash,
 				"deploymentReady", isDeploymentReady)
 
-			// Preserve old version as previous
-			credInfo.PreviousSecretName = credInfo.SecretName
-			credInfo.PreviousSecretHash = credInfo.SecretHash
+			// Move current to previous
+			secretInfo.PreviousHash = secretInfo.CurrentHash
+			secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
 
 			// Update to new version
-			credInfo.SecretName = secretName
-			credInfo.SecretHash = secretInfo.secretHash
+			secretInfo.CurrentHash = secretHash
+			secretInfo.LastChanged = time.Now()
 
 			// Reset node tracking for new version
-			// Only add nodes if deployment is ready
 			if isDeploymentReady {
-				credInfo.UpdatedNodes = coveredNodes
-				credInfo.AllNodesUpdated = (len(coveredNodes) == totalNodes)
+				secretInfo.NodesWithCurrent = coveredNodes
 			} else {
-				credInfo.UpdatedNodes = []string{}
-				credInfo.AllNodesUpdated = false
+				secretInfo.NodesWithCurrent = []string{}
 			}
-
-			credInfo.TotalNodes = totalNodes
 
 		} else {
 			// SAME version - accumulate nodes across deployments
-			// Only update if deployment is ready
 			if isDeploymentReady {
 				// Add newly covered nodes
 				for _, node := range coveredNodes {
-					if !slices.Contains(credInfo.UpdatedNodes, node) {
-						credInfo.UpdatedNodes = append(credInfo.UpdatedNodes, node)
+					if !slices.Contains(secretInfo.NodesWithCurrent, node) {
+						secretInfo.NodesWithCurrent = append(secretInfo.NodesWithCurrent, node)
 					}
 				}
 
-				// Recalculate AllNodesUpdated
-				credInfo.AllNodesUpdated = (len(credInfo.UpdatedNodes) == totalNodes)
-
 				// Clear previous version if all nodes now have current version
-				if credInfo.AllNodesUpdated && credInfo.PreviousSecretHash != "" {
-					Log.Info("All nodes updated with new credential, clearing previous version tracking",
+				if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
+					Log.Info("All nodes updated with new secret version, clearing previous",
 						"secret", secretName,
-						"previousSecret", credInfo.PreviousSecretName)
-					credInfo.PreviousSecretName = ""
-					credInfo.PreviousSecretHash = ""
+						"previousHash", secretInfo.PreviousHash)
+					secretInfo.PreviousHash = ""
+					secretInfo.NodesWithPrevious = []string{}
 				}
 			}
-
-			// Update total nodes if nodeset was scaled
-			if credInfo.TotalNodes != totalNodes {
-				Log.Info("NodeSet size changed, updating credential tracking",
-					"secret", secretName,
-					"oldTotal", credInfo.TotalNodes,
-					"newTotal", totalNodes,
-					"updatedNodes", len(credInfo.UpdatedNodes))
-				credInfo.TotalNodes = totalNodes
-				credInfo.AllNodesUpdated = (len(credInfo.UpdatedNodes) == totalNodes)
-			}
 		}
 
-		// Update timestamp if deployment is ready
-		if isDeploymentReady {
-			deploymentReadyCondition := deployment.Status.Conditions.Get(condition.DeploymentReadyCondition)
-			if deploymentReadyCondition != nil {
-				credInfo.LastUpdateTime = &deploymentReadyCondition.LastTransitionTime
-			}
-		}
-
-		// Save back to status using TransportURL as key
-		instance.Status.ServiceCredentialStatus[transportURLID] = credInfo
-
-		Log.Info("Updated RabbitMQ credential status",
-			"transportURL", transportURLID,
-			"secret", secretName,
-			"deploymentReady", isDeploymentReady,
-			"updatedNodes", len(credInfo.UpdatedNodes),
-			"totalNodes", credInfo.TotalNodes,
-			"allNodesUpdated", credInfo.AllNodesUpdated,
-			"hasPrevious", credInfo.PreviousSecretHash != "")
+		trackingData.Secrets[secretName] = secretInfo
 	}
+
+	// Update per-node status
+	for _, nodeName := range allNodes {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{},
+			SecretsWithPrevious: []string{},
+		}
+
+		// Check which secrets this node has
+		for secretName, secretInfo := range trackingData.Secrets {
+			if slices.Contains(secretInfo.NodesWithCurrent, nodeName) {
+				nodeStatus.SecretsWithCurrent = append(nodeStatus.SecretsWithCurrent, secretName)
+			} else if slices.Contains(secretInfo.NodesWithPrevious, nodeName) {
+				nodeStatus.SecretsWithPrevious = append(nodeStatus.SecretsWithPrevious, secretName)
+				nodeStatus.AllSecretsUpdated = false
+			} else {
+				// Node doesn't have this secret at all
+				nodeStatus.AllSecretsUpdated = false
+			}
+		}
+
+		trackingData.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// Save tracking data to ConfigMap
+	if err := r.saveSecretTrackingData(ctx, helper, instance, trackingData); err != nil {
+		Log.Error(err, "Failed to save secret tracking data")
+		return err
+	}
+
+	// Calculate and update summary in CR status
+	configMapName := getSecretTrackingConfigMapName(instance.Name)
+	instance.Status.SecretDeployment = computeDeploymentSummary(trackingData, totalNodes, configMapName)
+
+	Log.Info("Secret deployment tracking updated",
+		"totalNodes", instance.Status.SecretDeployment.TotalNodes,
+		"updatedNodes", instance.Status.SecretDeployment.UpdatedNodes,
+		"allNodesUpdated", instance.Status.SecretDeployment.AllNodesUpdated)
 
 	return nil
-}
-
-// RabbitMQSecretInfo holds information about a RabbitMQ credential secret
-type RabbitMQSecretInfo struct {
-	secretName string // RabbitMQUser secret name (e.g., rabbitmq-user-nova-cell1-transport-novacell1-11-user)
-	secretHash string // hash of the secret
-}
-
-// detectRabbitMQSecretsInDeployment detects RabbitMQ credential secrets in a deployment
-// by parsing transport_url from config secrets.
-//
-// Algorithm:
-// 1. Scan all secrets in deployment.Status.SecretHashes
-// 2. Look for transport_url fields in secret data
-// 3. Extract username from transport_url using regex
-// 4. Find corresponding rabbitmq-user-* secret by listing and matching username
-// 5. Track those secrets
-func (r *OpenStackDataPlaneNodeSetReconciler) detectRabbitMQSecretsInDeployment(
-	ctx context.Context,
-	deployment *dataplanev1.OpenStackDataPlaneDeployment,
-	namespace string,
-) (map[string]RabbitMQSecretInfo, error) {
-	Log := r.GetLogger(ctx)
-	secrets := make(map[string]RabbitMQSecretInfo)
-
-	if deployment == nil {
-		return secrets, nil
-	}
-
-	// Track usernames we've already found to avoid duplicates
-	foundUsernames := make(map[string]bool)
-
-	// Scan all secrets in the deployment for transport_url fields
-	for secretName, deploymentSecretHash := range deployment.Status.SecretHashes {
-		// Skip certificate secrets (optimization - they won't have transport_url)
-		if strings.HasPrefix(secretName, "cert-") {
-			continue
-		}
-
-		// Get the secret
-		secret := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{
-			Name:      secretName,
-			Namespace: namespace,
-		}, secret)
-		if err != nil {
-			if k8s_errors.IsNotFound(err) {
-				Log.V(1).Info("Secret not found, skipping", "secret", secretName)
-				continue
-			}
-			Log.Error(err, "Failed to get secret, skipping", "secret", secretName)
-			continue
-		}
-
-		// CRITICAL: Verify the deployment actually deployed this version of the secret
-		// Compute current secret hash and compare with deployment's hash
-		currentSecretHash, err := util.ObjectHash(secret.Data)
-		if err != nil {
-			Log.Error(err, "Failed to compute secret hash", "secret", secretName)
-			continue
-		}
-
-		if currentSecretHash != deploymentSecretHash {
-			// Deployment has old version of this secret, skip it
-			Log.V(1).Info("Deployment has old version of secret, skipping",
-				"secret", secretName,
-				"deploymentHash", deploymentSecretHash,
-				"currentHash", currentSecretHash)
-			continue
-		}
-
-		// Scan all fields in secret data for transport_url
-		for key, value := range secret.Data {
-			valueStr := string(value)
-
-			// Look for transport_url in this field
-			if !strings.Contains(valueStr, "transport_url=") {
-				continue
-			}
-
-			// Extract username from transport_url using regex
-			matches := transportURLUsernameRegex.FindStringSubmatch(valueStr)
-			if len(matches) < 2 {
-				Log.V(1).Info("Could not extract username from transport_url",
-					"secret", secretName,
-					"field", key)
-				continue
-			}
-
-			username := matches[1]
-
-			// Skip if we already found this username
-			if foundUsernames[username] {
-				continue
-			}
-			foundUsernames[username] = true
-
-			Log.V(1).Info("Found RabbitMQ username in deployment",
-				"username", username,
-				"secret", secretName,
-				"field", key)
-
-			// Find the rabbitmq-user-* secret for this username
-			rabbitMQUserSecret, err := r.findRabbitMQUserSecretByUsername(ctx, namespace, username)
-			if err != nil {
-				Log.Error(err, "Failed to find RabbitMQ user secret for username",
-					"username", username)
-				continue
-			}
-			if rabbitMQUserSecret == "" {
-				Log.V(1).Info("No RabbitMQ user secret found for username",
-					"username", username)
-				continue
-			}
-
-			// Get the secret to compute hash
-			userSecret := &corev1.Secret{}
-			err = r.Get(ctx, types.NamespacedName{
-				Name:      rabbitMQUserSecret,
-				Namespace: namespace,
-			}, userSecret)
-			if err != nil {
-				if k8s_errors.IsNotFound(err) {
-					Log.Info("RabbitMQ user secret not found",
-						"secret", rabbitMQUserSecret)
-					continue
-				}
-				Log.Error(err, "Failed to get RabbitMQ user secret",
-					"secret", rabbitMQUserSecret)
-				continue
-			}
-
-			// Compute hash
-			rabbitmqSecretHash, err := util.ObjectHash(userSecret.Data)
-			if err != nil {
-				Log.Error(err, "Failed to compute RabbitMQ secret hash",
-					"secret", rabbitMQUserSecret)
-				continue
-			}
-
-			secrets[rabbitMQUserSecret] = RabbitMQSecretInfo{
-				secretName: rabbitMQUserSecret,
-				secretHash: rabbitmqSecretHash,
-			}
-
-			Log.Info("Detected RabbitMQ credential in deployment",
-				"username", username,
-				"secret", rabbitMQUserSecret,
-				"hash", rabbitmqSecretHash)
-		}
-	}
-
-	return secrets, nil
-}
-
-// findRabbitMQUserSecretByUsername finds the rabbitmq-user-* secret name for a given username.
-// It lists all secrets with the rabbitmq-user- prefix and checks their username field.
-func (r *OpenStackDataPlaneNodeSetReconciler) findRabbitMQUserSecretByUsername(
-	ctx context.Context,
-	namespace string,
-	username string,
-) (string, error) {
-	Log := r.GetLogger(ctx)
-
-	// List all secrets in the namespace
-	secretList := &corev1.SecretList{}
-	if err := r.List(ctx, secretList, client.InNamespace(namespace)); err != nil {
-		return "", fmt.Errorf("failed to list secrets: %w", err)
-	}
-
-	// Find secret with rabbitmq-user- prefix that has this username
-	for i := range secretList.Items {
-		secret := &secretList.Items[i]
-
-		// Only check rabbitmq-user-* secrets
-		if !strings.HasPrefix(secret.Name, rabbitmqUserSecretPrefix) {
-			continue
-		}
-
-		// Check if this secret has the username we're looking for
-		if secretUsername, ok := secret.Data["username"]; ok {
-			if string(secretUsername) == username {
-				Log.V(1).Info("Found matching RabbitMQ user secret",
-					"username", username,
-					"secret", secret.Name)
-				return secret.Name, nil
-			}
-		}
-	}
-
-	return "", nil
-}
-
-// bootstrapRabbitMQSecretsFromRabbitMQUsers discovers RabbitMQ user secrets by introspecting
-// RabbitMQUser CRs in the namespace. This is used ONLY during bootstrap (when serviceCredentialStatus
-// is nil AND no secrets found in deployment) to discover what credentials are actually in use on
-// the dataplane nodes.
-//
-// Why this is needed:
-//   - Normal operation parses transport_url from config secrets in the deployment
-//   - But if the deployment was deleted, or tracking was deployed after deployments completed,
-//     we have no deployment to parse
-//   - Edge case: operator upgraded, old deployments exist but don't have the tracking logic yet
-//   - Bootstrap fills the gap by directly listing RabbitMQUser CRs to see what's currently deployed
-//
-// This is a one-time operation:
-// - Only runs when status is nil (first time seeing this nodeset)
-// - Only runs when deployment has no RabbitMQ secrets (can't parse from deployment)
-// - After bootstrap, normal transport_url parsing takes over
-// - Future deployments will be tracked via detectRabbitMQSecretsInDeployment()
-func (r *OpenStackDataPlaneNodeSetReconciler) bootstrapRabbitMQSecretsFromRabbitMQUsers(
-	ctx context.Context,
-	namespace string,
-) (map[string]RabbitMQSecretInfo, error) {
-	Log := r.GetLogger(ctx)
-	secrets := make(map[string]RabbitMQSecretInfo)
-
-	Log.Info("Bootstrapping RabbitMQ credential tracking from RabbitMQUser CRs", "namespace", namespace)
-
-	// List all RabbitMQUser CRs in the namespace
-	rabbitMQUserList := &rabbitmqv1.RabbitMQUserList{}
-	if err := r.List(ctx, rabbitMQUserList, client.InNamespace(namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list RabbitMQUsers for bootstrap: %w", err)
-	}
-
-	Log.Info("Found RabbitMQUsers during bootstrap", "count", len(rabbitMQUserList.Items))
-
-	// Extract RabbitMQ user secrets from each RabbitMQUser
-	for i := range rabbitMQUserList.Items {
-		rabbitMQUser := &rabbitMQUserList.Items[i]
-
-		// Get the RabbitMQ user secret name from the RabbitMQUser status
-		secretName := rabbitMQUser.Status.SecretName
-		if secretName == "" {
-			Log.V(1).Info("RabbitMQUser has no secret name in status, skipping",
-				"rabbitMQUser", rabbitMQUser.Name)
-			continue
-		}
-
-		// Only track RabbitMQ user secrets (follow naming convention for safety)
-		if !strings.HasPrefix(secretName, rabbitmqUserSecretPrefix) {
-			Log.V(1).Info("Secret is not a RabbitMQ user secret, skipping",
-				"rabbitMQUser", rabbitMQUser.Name,
-				"secret", secretName)
-			continue
-		}
-
-		// Skip if we already found this secret
-		if _, exists := secrets[secretName]; exists {
-			continue
-		}
-
-		// Get the secret to compute its hash
-		secret := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{
-			Name:      secretName,
-			Namespace: namespace,
-		}, secret)
-		if err != nil {
-			if k8s_errors.IsNotFound(err) {
-				Log.Info("RabbitMQ secret referenced by RabbitMQUser not found, skipping",
-					"rabbitMQUser", rabbitMQUser.Name,
-					"secret", secretName)
-				continue
-			}
-			Log.Error(err, "Failed to get RabbitMQ secret during bootstrap, skipping",
-				"rabbitMQUser", rabbitMQUser.Name,
-				"secret", secretName)
-			continue
-		}
-
-		// Compute hash of the secret data
-		rabbitmqSecretHash, err := util.ObjectHash(secret.Data)
-		if err != nil {
-			Log.Error(err, "Failed to compute RabbitMQ secret hash during bootstrap, skipping",
-				"secret", secretName)
-			continue
-		}
-
-		secrets[secretName] = RabbitMQSecretInfo{
-			secretName: secretName,
-			secretHash: rabbitmqSecretHash,
-		}
-
-		Log.Info("Discovered RabbitMQ credential during bootstrap",
-			"rabbitMQUser", rabbitMQUser.Name,
-			"secret", secretName,
-			"hash", rabbitmqSecretHash)
-	}
-
-	return secrets, nil
-}
-
-// extractTransportURLFromSecretName extracts the TransportURL identifier from a
-// rabbitmq-user-* secret name.
-//
-// Secret name pattern: rabbitmq-user-{transporturl}-{username}-user
-// Example: rabbitmq-user-nova-cell1-transport-cell1user1-user
-//
-//	→ TransportURL: nova-cell1-transport
-//
-// This is used to detect rotation when a new user is created for the same TransportURL.
-func extractTransportURLFromSecretName(secretName string) string {
-	// Remove rabbitmq-user- prefix
-	if !strings.HasPrefix(secretName, rabbitmqUserSecretPrefix) {
-		return ""
-	}
-	remainder := strings.TrimPrefix(secretName, rabbitmqUserSecretPrefix)
-
-	// Secret format: {transporturl}-{username}-user
-	// We need to find where transporturl ends and username begins
-	// The suffix is always "-user", so remove it first
-	if !strings.HasSuffix(remainder, "-user") {
-		return ""
-	}
-	withoutSuffix := strings.TrimSuffix(remainder, "-user")
-
-	// Now we have: {transporturl}-{username}
-	// Find the last occurrence of "-" to split transporturl from username
-	lastDash := strings.LastIndex(withoutSuffix, "-")
-	if lastDash == -1 {
-		return ""
-	}
-
-	transportURL := withoutSuffix[:lastDash]
-	return transportURL
 }
 
 // getNodesCoveredByDeployment determines which nodes were covered by a deployment

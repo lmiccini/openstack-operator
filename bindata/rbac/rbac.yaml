@@ -658,7 +658,7 @@ rules:
 - apiGroups:
   - rabbitmq.openstack.org
   resources:
-  - transporturls
+  - rabbitmqusers
   verbs:
   - get
   - list

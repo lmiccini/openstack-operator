@@ -161,44 +161,26 @@ type OpenStackDataPlaneNodeSetStatus struct {
 	//DeployedBmhHash - Hash of BMHs deployed
 	DeployedBmhHash string `json:"deployedBmhHash,omitempty"`
 
-	// ServiceCredentialStatus tracks which nodes have been updated with current credentials per service
-	// Key is service name (e.g., "nova", "neutron", "ironic")
-	// This enables RabbitMQ credential lifecycle management by tracking which nodes actually have which credentials
-	ServiceCredentialStatus map[string]ServiceCredentialInfo `json:"serviceCredentialStatus,omitempty"`
+	// SecretDeployment tracks secret deployment progress across nodeset nodes
+	// Details are stored in a ConfigMap to avoid bloating the CR status
+	SecretDeployment *SecretDeploymentStatus `json:"secretDeployment,omitempty"`
 }
 
-// ServiceCredentialInfo tracks credential deployment status for a specific service
-type ServiceCredentialInfo struct {
-	// SecretName is the name of the secret containing current credentials (e.g., "rabbitmq-user-nova-cell1-transport-novacell1-11-user")
-	SecretName string `json:"secretName,omitempty"`
+// SecretDeploymentStatus tracks secret deployment progress across nodeset nodes
+type SecretDeploymentStatus struct {
+	// AllNodesUpdated indicates all nodes have current versions of all tracked secrets
+	AllNodesUpdated bool `json:"allNodesUpdated"`
 
-	// SecretHash is the hash of the current secret data
-	// This is compared against deployment.Status.SecretHashes to determine version
-	SecretHash string `json:"secretHash,omitempty"`
+	// TotalNodes is the total number of nodes in the nodeset
+	TotalNodes int `json:"totalNodes"`
 
-	// PreviousSecretName is the name of the previous credential secret during rotation
-	// This field is populated when a new credential version is deployed but not all nodes have it yet.
-	// It allows RabbitMQ controller to know that old credentials are still in use and should not be deleted.
-	// Cleared when AllNodesUpdated becomes true for the current version.
-	PreviousSecretName string `json:"previousSecretName,omitempty"`
+	// UpdatedNodes is count of nodes with all current secret versions
+	UpdatedNodes int `json:"updatedNodes"`
 
-	// PreviousSecretHash is the hash of the previous credential secret during rotation
-	// Used by RabbitMQ controller to verify if old credentials are still tracked and in use.
-	PreviousSecretHash string `json:"previousSecretHash,omitempty"`
+	// ConfigMapName references the ConfigMap containing detailed per-secret tracking
+	ConfigMapName string `json:"configMapName,omitempty"`
 
-	// UpdatedNodes lists the nodes that have been updated with this secret hash
-	// This is populated as deployments complete, tracking actual rollout progress
-	UpdatedNodes []string `json:"updatedNodes,omitempty"`
-
-	// TotalNodes is the total number of nodes in the nodeset that use this service
-	// Typically equal to len(nodeset.Spec.Nodes)
-	TotalNodes int `json:"totalNodes,omitempty"`
-
-	// AllNodesUpdated indicates if all nodes have been updated with current credentials
-	// True when len(UpdatedNodes) == TotalNodes
-	AllNodesUpdated bool `json:"allNodesUpdated,omitempty"`
-
-	// LastUpdateTime is when this service credential status was last updated
+	// LastUpdateTime is when this status was last updated
 	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
 }
 
@@ -218,6 +200,14 @@ func init() {
 // IsReady - returns true if the DataPlane is ready
 func (instance OpenStackDataPlaneNodeSet) IsReady() bool {
 	return instance.Status.Conditions.IsTrue(condition.ReadyCondition)
+}
+
+// AreAllNodesUpdated returns true if all nodes in the nodeset have been updated
+// with current versions of all tracked secrets. Returns false if secret deployment
+// tracking is not initialized or if any nodes have pending updates.
+func (instance OpenStackDataPlaneNodeSet) AreAllNodesUpdated() bool {
+	return instance.Status.SecretDeployment != nil &&
+		instance.Status.SecretDeployment.AllNodesUpdated
 }
 
 // InitConditions - Initializes Status Conditons

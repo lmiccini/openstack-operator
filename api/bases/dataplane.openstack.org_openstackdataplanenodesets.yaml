@@ -1983,64 +1983,39 @@ spec:
                   generation, then the controller has not processed the latest changes.
                 format: int64
                 type: integer
+              secretDeployment:
+                description: |-
+                  SecretDeployment tracks secret deployment progress across nodeset nodes
+                  Details are stored in a ConfigMap to avoid bloating the CR status
+                properties:
+                  allNodesUpdated:
+                    description: AllNodesUpdated indicates all nodes have current
+                      versions of all tracked secrets
+                    type: boolean
+                  configMapName:
+                    description: ConfigMapName references the ConfigMap containing
+                      detailed per-secret tracking
+                    type: string
+                  lastUpdateTime:
+                    description: LastUpdateTime is when this status was last updated
+                    format: date-time
+                    type: string
+                  totalNodes:
+                    description: TotalNodes is the total number of nodes in the nodeset
+                    type: integer
+                  updatedNodes:
+                    description: UpdatedNodes is count of nodes with all current secret
+                      versions
+                    type: integer
+                required:
+                - allNodesUpdated
+                - totalNodes
+                - updatedNodes
+                type: object
               secretHashes:
                 additionalProperties:
                   type: string
                 description: SecretHashes
-                type: object
-              serviceCredentialStatus:
-                additionalProperties:
-                  description: ServiceCredentialInfo tracks credential deployment
-                    status for a specific service
-                  properties:
-                    allNodesUpdated:
-                      description: |-
-                        AllNodesUpdated indicates if all nodes have been updated with current credentials
-                        True when len(UpdatedNodes) == TotalNodes
-                      type: boolean
-                    lastUpdateTime:
-                      description: LastUpdateTime is when this service credential
-                        status was last updated
-                      format: date-time
-                      type: string
-                    previousSecretHash:
-                      description: |-
-                        PreviousSecretHash is the hash of the previous credential secret during rotation
-                        Used by RabbitMQ controller to verify if old credentials are still tracked and in use.
-                      type: string
-                    previousSecretName:
-                      description: |-
-                        PreviousSecretName is the name of the previous credential secret during rotation
-                        This field is populated when a new credential version is deployed but not all nodes have it yet.
-                        It allows RabbitMQ controller to know that old credentials are still in use and should not be deleted.
-                        Cleared when AllNodesUpdated becomes true for the current version.
-                      type: string
-                    secretHash:
-                      description: |-
-                        SecretHash is the hash of the current secret data
-                        This is compared against deployment.Status.SecretHashes to determine version
-                      type: string
-                    secretName:
-                      description: SecretName is the name of the secret containing
-                        current credentials (e.g., "rabbitmq-user-nova-cell1-transport-novacell1-11-user")
-                      type: string
-                    totalNodes:
-                      description: |-
-                        TotalNodes is the total number of nodes in the nodeset that use this service
-                        Typically equal to len(nodeset.Spec.Nodes)
-                      type: integer
-                    updatedNodes:
-                      description: |-
-                        UpdatedNodes lists the nodes that have been updated with this secret hash
-                        This is populated as deployments complete, tracking actual rollout progress
-                      items:
-                        type: string
-                      type: array
-                  type: object
-                description: |-
-                  ServiceCredentialStatus tracks which nodes have been updated with current credentials per service
-                  Key is service name (e.g., "nova", "neutron", "ironic")
-                  This enables RabbitMQ credential lifecycle management by tracking which nodes actually have which credentials
                 type: object
             type: object
         type: object

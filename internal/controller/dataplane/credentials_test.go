@@ -16,296 +16,12 @@ limitations under the License.
 package dataplane
 
 import (
-	"context"
-	"strings"
+	"encoding/json"
 	"testing"
+	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	dataplanev1 "github.com/openstack-k8s-operators/openstack-operator/api/dataplane/v1beta1"
 )
-
-func TestDetectRabbitMQSecretsInDeployment(t *testing.T) {
-	tests := []struct {
-		name        string
-		deployment  *dataplanev1.OpenStackDataPlaneDeployment
-		secrets     []corev1.Secret
-		wantSecrets []string // Expected rabbitmq-user-* secret names
-	}{
-		{
-			name:        "nil deployment returns empty",
-			deployment:  nil,
-			secrets:     []corev1.Secret{},
-			wantSecrets: []string{},
-		},
-		{
-			name: "detect rabbitmq-user from transport_url in config",
-			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-deployment",
-					Namespace: "test",
-				},
-				// Hash will be computed and set in test loop
-				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{},
-				},
-			},
-			secrets: []corev1.Secret{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "nova-cell1-compute-config",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-user-nova-cell1-transport-novacell1-11-user",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"username": []byte("novacell1-11"),
-						"password": []byte("password123"),
-					},
-				},
-			},
-			wantSecrets: []string{"rabbitmq-user-nova-cell1-transport-novacell1-11-user"},
-		},
-		{
-			name: "skip non-transport_url secrets",
-			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-deployment",
-					Namespace: "test",
-				},
-				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{},
-				},
-			},
-			secrets: []corev1.Secret{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "nova-cell1-compute-config",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "cert-my-cert",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"cert.pem": []byte("certificate data"),
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-user-nova-cell1-transport-novacell1-11-user",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"username": []byte("novacell1-11"),
-						"password": []byte("password123"),
-					},
-				},
-			},
-			wantSecrets: []string{"rabbitmq-user-nova-cell1-transport-novacell1-11-user"},
-		},
-		{
-			name: "detect multiple rabbitmq-user from multiple configs",
-			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-deployment",
-					Namespace: "test",
-				},
-				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{},
-				},
-			},
-			secrets: []corev1.Secret{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "nova-cell1-compute-config",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "neutron-ovn-metadata-agent-config",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"neutron.conf": []byte("transport_url=rabbit://neutron-5:password@host:5671/?ssl=1"),
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-user-nova-cell1-transport-novacell1-11-user",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"username": []byte("novacell1-11"),
-						"password": []byte("password123"),
-					},
-				},
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-user-neutron-transport-neutron-5-user",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"username": []byte("neutron-5"),
-						"password": []byte("password456"),
-					},
-				},
-			},
-			wantSecrets: []string{
-				"rabbitmq-user-nova-cell1-transport-novacell1-11-user",
-				"rabbitmq-user-neutron-transport-neutron-5-user",
-			},
-		},
-		{
-			name: "skip if rabbitmq-user secret not found",
-			deployment: &dataplanev1.OpenStackDataPlaneDeployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-deployment",
-					Namespace: "test",
-				},
-				Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
-					SecretHashes: map[string]string{},
-				},
-			},
-			secrets: []corev1.Secret{
-				{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      "nova-cell1-compute-config",
-						Namespace: "test",
-					},
-					Data: map[string][]byte{
-						"01-nova.conf": []byte("transport_url=rabbit://novacell1-11:password@host:5671/?ssl=1"),
-					},
-				},
-				// rabbitmq-user secret doesn't exist
-			},
-			wantSecrets: []string{}, // Should skip gracefully
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create scheme and add types
-			scheme := runtime.NewScheme()
-			_ = corev1.AddToScheme(scheme)
-			_ = dataplanev1.AddToScheme(scheme)
-
-			// Create objects for fake client
-			objs := []runtime.Object{}
-			if tt.deployment != nil {
-				objs = append(objs, tt.deployment)
-			}
-			for i := range tt.secrets {
-				objs = append(objs, &tt.secrets[i])
-			}
-
-			// Create fake client
-			fakeClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithRuntimeObjects(objs...).
-				Build()
-
-			// Create reconciler
-			reconciler := &OpenStackDataPlaneNodeSetReconciler{
-				Client: fakeClient,
-			}
-
-			// Compute and set secret hashes in deployment to match current secrets
-			// This simulates the deployment having deployed the current version
-			if tt.deployment != nil {
-				for i := range tt.secrets {
-					secret := &tt.secrets[i]
-					// Only compute hash for config secrets (not rabbitmq-user-* secrets)
-					if strings.HasPrefix(secret.Name, "rabbitmq-user-") {
-						continue
-					}
-					hash, err := util.ObjectHash(secret.Data)
-					if err != nil {
-						t.Fatalf("failed to compute hash for secret %s: %v", secret.Name, err)
-					}
-					tt.deployment.Status.SecretHashes[secret.Name] = hash
-				}
-			}
-
-			// Call detectRabbitMQSecretsInDeployment
-			secrets, err := reconciler.detectRabbitMQSecretsInDeployment(context.TODO(), tt.deployment, "test")
-			if err != nil {
-				t.Fatalf("detectRabbitMQSecretsInDeployment() error = %v", err)
-			}
-
-			// Check we got expected number of secrets
-			if len(secrets) != len(tt.wantSecrets) {
-				t.Errorf("detectRabbitMQSecretsInDeployment() returned %d secrets, want %d", len(secrets), len(tt.wantSecrets))
-			}
-
-			// Check each expected secret exists
-			for _, wantSecret := range tt.wantSecrets {
-				if _, found := secrets[wantSecret]; !found {
-					t.Errorf("detectRabbitMQSecretsInDeployment() missing secret %q", wantSecret)
-				}
-			}
-
-			// Check no unexpected secrets
-			for secretName := range secrets {
-				found := false
-				for _, wantSecret := range tt.wantSecrets {
-					if secretName == wantSecret {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("detectRabbitMQSecretsInDeployment() returned unexpected secret %q", secretName)
-				}
-			}
-
-			// Verify hashes are computed correctly
-			for secretName, secretInfo := range secrets {
-				// Find the corresponding secret
-				var secret *corev1.Secret
-				for i := range tt.secrets {
-					if tt.secrets[i].Name == secretName {
-						secret = &tt.secrets[i]
-						break
-					}
-				}
-				if secret == nil {
-					continue
-				}
-
-				// Compute expected hash
-				expectedHash, err := util.ObjectHash(secret.Data)
-				if err != nil {
-					t.Fatalf("failed to compute expected hash: %v", err)
-				}
-
-				if secretInfo.secretHash != expectedHash {
-					t.Errorf("secret %q has hash %q, want %q", secretName, secretInfo.secretHash, expectedHash)
-				}
-			}
-		})
-	}
-}
 
 func TestGetNodesCoveredByDeployment(t *testing.T) {
 	tests := []struct {
@@ -471,56 +187,268 @@ func TestGetAllNodeNames(t *testing.T) {
 	}
 }
 
-func TestExtractTransportURLFromSecretName(t *testing.T) {
+func TestComputeDeploymentSummary(t *testing.T) {
 	tests := []struct {
-		name              string
-		secretName        string
-		expectedTransport string
+		name               string
+		trackingData       *SecretTrackingData
+		totalNodes         int
+		expectedUpdated    int
+		expectedAllUpdated bool
 	}{
 		{
-			name:              "nova cell1 transport",
-			secretName:        "rabbitmq-user-nova-cell1-transport-cell1user1-user",
-			expectedTransport: "nova-cell1-transport",
+			name: "all nodes updated",
+			trackingData: &SecretTrackingData{
+				NodeStatus: map[string]NodeSecretStatus{
+					"node1": {AllSecretsUpdated: true},
+					"node2": {AllSecretsUpdated: true},
+					"node3": {AllSecretsUpdated: true},
+				},
+			},
+			totalNodes:         3,
+			expectedUpdated:    3,
+			expectedAllUpdated: true,
 		},
 		{
-			name:              "nova cell1 transport with different user",
-			secretName:        "rabbitmq-user-nova-cell1-transport-cell1user2-user",
-			expectedTransport: "nova-cell1-transport",
+			name: "partial nodes updated",
+			trackingData: &SecretTrackingData{
+				NodeStatus: map[string]NodeSecretStatus{
+					"node1": {AllSecretsUpdated: true},
+					"node2": {AllSecretsUpdated: false},
+					"node3": {AllSecretsUpdated: true},
+				},
+			},
+			totalNodes:         3,
+			expectedUpdated:    2,
+			expectedAllUpdated: false,
 		},
 		{
-			name:              "neutron transport",
-			secretName:        "rabbitmq-user-neutron-transport-neutronuser-user",
-			expectedTransport: "neutron-transport",
+			name: "no nodes updated",
+			trackingData: &SecretTrackingData{
+				NodeStatus: map[string]NodeSecretStatus{
+					"node1": {AllSecretsUpdated: false},
+					"node2": {AllSecretsUpdated: false},
+				},
+			},
+			totalNodes:         2,
+			expectedUpdated:    0,
+			expectedAllUpdated: false,
 		},
 		{
-			name:              "nova api transport",
-			secretName:        "rabbitmq-user-nova-api-transport-apiuser-user",
-			expectedTransport: "nova-api-transport",
-		},
-		{
-			name:              "invalid prefix",
-			secretName:        "invalid-nova-cell1-transport-cell1user1-user",
-			expectedTransport: "",
-		},
-		{
-			name:              "no user suffix",
-			secretName:        "rabbitmq-user-nova-cell1-transport-cell1user1",
-			expectedTransport: "",
-		},
-		{
-			name:              "single character username",
-			secretName:        "rabbitmq-user-nova-cell1-transport-a-user",
-			expectedTransport: "nova-cell1-transport",
+			name: "empty tracking data",
+			trackingData: &SecretTrackingData{
+				NodeStatus: map[string]NodeSecretStatus{},
+			},
+			totalNodes:         0,
+			expectedUpdated:    0,
+			expectedAllUpdated: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractTransportURLFromSecretName(tt.secretName)
-			if result != tt.expectedTransport {
-				t.Errorf("extractTransportURLFromSecretName(%q) = %q, want %q",
-					tt.secretName, result, tt.expectedTransport)
+			summary := computeDeploymentSummary(tt.trackingData, tt.totalNodes, "test-configmap")
+
+			if summary.UpdatedNodes != tt.expectedUpdated {
+				t.Errorf("computeDeploymentSummary() UpdatedNodes = %d, want %d",
+					summary.UpdatedNodes, tt.expectedUpdated)
+			}
+
+			if summary.AllNodesUpdated != tt.expectedAllUpdated {
+				t.Errorf("computeDeploymentSummary() AllNodesUpdated = %v, want %v",
+					summary.AllNodesUpdated, tt.expectedAllUpdated)
+			}
+
+			if summary.TotalNodes != tt.totalNodes {
+				t.Errorf("computeDeploymentSummary() TotalNodes = %d, want %d",
+					summary.TotalNodes, tt.totalNodes)
+			}
+
+			if summary.ConfigMapName != "test-configmap" {
+				t.Errorf("computeDeploymentSummary() ConfigMapName = %s, want test-configmap",
+					summary.ConfigMapName)
+			}
+
+			if summary.LastUpdateTime == nil {
+				t.Error("computeDeploymentSummary() LastUpdateTime is nil, want timestamp")
 			}
 		})
+	}
+}
+
+func TestSecretTrackingDataJSONSerialization(t *testing.T) {
+	now := time.Now()
+	original := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"secret1": {
+				CurrentHash:       "hash123",
+				PreviousHash:      "hash456",
+				NodesWithCurrent:  []string{"node1", "node2"},
+				NodesWithPrevious: []string{"node3"},
+				LastChanged:       now,
+			},
+			"secret2": {
+				CurrentHash:      "hash789",
+				NodesWithCurrent: []string{"node1", "node2", "node3"},
+				LastChanged:      now,
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"node1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"secret1", "secret2"},
+			},
+			"node2": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"secret1", "secret2"},
+			},
+			"node3": {
+				AllSecretsUpdated:   false,
+				SecretsWithCurrent:  []string{"secret2"},
+				SecretsWithPrevious: []string{"secret1"},
+			},
+		},
+	}
+
+	// Marshal to JSON
+	jsonData, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Failed to marshal SecretTrackingData: %v", err)
+	}
+
+	// Unmarshal back
+	var restored SecretTrackingData
+	if err := json.Unmarshal(jsonData, &restored); err != nil {
+		t.Fatalf("Failed to unmarshal SecretTrackingData: %v", err)
+	}
+
+	// Verify secrets
+	if len(restored.Secrets) != len(original.Secrets) {
+		t.Errorf("Restored secrets count = %d, want %d", len(restored.Secrets), len(original.Secrets))
+	}
+
+	secret1 := restored.Secrets["secret1"]
+	if secret1.CurrentHash != "hash123" {
+		t.Errorf("Restored secret1 CurrentHash = %s, want hash123", secret1.CurrentHash)
+	}
+	if secret1.PreviousHash != "hash456" {
+		t.Errorf("Restored secret1 PreviousHash = %s, want hash456", secret1.PreviousHash)
+	}
+	if len(secret1.NodesWithCurrent) != 2 {
+		t.Errorf("Restored secret1 NodesWithCurrent count = %d, want 2", len(secret1.NodesWithCurrent))
+	}
+
+	// Verify node status
+	if len(restored.NodeStatus) != len(original.NodeStatus) {
+		t.Errorf("Restored node status count = %d, want %d", len(restored.NodeStatus), len(original.NodeStatus))
+	}
+
+	node1 := restored.NodeStatus["node1"]
+	if !node1.AllSecretsUpdated {
+		t.Error("Restored node1 AllSecretsUpdated = false, want true")
+	}
+	if len(node1.SecretsWithCurrent) != 2 {
+		t.Errorf("Restored node1 SecretsWithCurrent count = %d, want 2", len(node1.SecretsWithCurrent))
+	}
+}
+
+func TestGetSecretTrackingConfigMapName(t *testing.T) {
+	tests := []struct {
+		nodesetName string
+		expected    string
+	}{
+		{
+			nodesetName: "compute-nodes",
+			expected:    "compute-nodes-secret-tracking",
+		},
+		{
+			nodesetName: "edpm",
+			expected:    "edpm-secret-tracking",
+		},
+		{
+			nodesetName: "my-nodeset-123",
+			expected:    "my-nodeset-123-secret-tracking",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.nodesetName, func(t *testing.T) {
+			result := getSecretTrackingConfigMapName(tt.nodesetName)
+			if result != tt.expected {
+				t.Errorf("getSecretTrackingConfigMapName(%q) = %q, want %q",
+					tt.nodesetName, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSecretRotationTracking(t *testing.T) {
+	// Simulate secret rotation scenario
+	trackingData := &SecretTrackingData{
+		Secrets:    make(map[string]SecretVersionInfo),
+		NodeStatus: make(map[string]NodeSecretStatus),
+	}
+
+	now := time.Now()
+
+	// Step 1: Initial secret deployment
+	trackingData.Secrets["rabbitmq-secret"] = SecretVersionInfo{
+		CurrentHash:      "hash-v1",
+		NodesWithCurrent: []string{"node1", "node2"},
+		LastChanged:      now,
+	}
+
+	// Verify initial state
+	secret := trackingData.Secrets["rabbitmq-secret"]
+	if secret.CurrentHash != "hash-v1" {
+		t.Errorf("Initial CurrentHash = %s, want hash-v1", secret.CurrentHash)
+	}
+	if secret.PreviousHash != "" {
+		t.Errorf("Initial PreviousHash = %s, want empty", secret.PreviousHash)
+	}
+
+	// Step 2: Simulate rotation - hash changes
+	secret.PreviousHash = secret.CurrentHash
+	secret.NodesWithPrevious = secret.NodesWithCurrent
+	secret.CurrentHash = "hash-v2"
+	secret.NodesWithCurrent = []string{"node1"} // Only node1 has new version
+	secret.LastChanged = now.Add(1 * time.Hour)
+	trackingData.Secrets["rabbitmq-secret"] = secret
+
+	// Verify rotation state
+	secret = trackingData.Secrets["rabbitmq-secret"]
+	if secret.CurrentHash != "hash-v2" {
+		t.Errorf("After rotation CurrentHash = %s, want hash-v2", secret.CurrentHash)
+	}
+	if secret.PreviousHash != "hash-v1" {
+		t.Errorf("After rotation PreviousHash = %s, want hash-v1", secret.PreviousHash)
+	}
+	if len(secret.NodesWithPrevious) != 2 {
+		t.Errorf("After rotation NodesWithPrevious count = %d, want 2", len(secret.NodesWithPrevious))
+	}
+	if len(secret.NodesWithCurrent) != 1 {
+		t.Errorf("After rotation NodesWithCurrent count = %d, want 1", len(secret.NodesWithCurrent))
+	}
+
+	// Step 3: Second node gets new version
+	secret.NodesWithCurrent = append(secret.NodesWithCurrent, "node2")
+	trackingData.Secrets["rabbitmq-secret"] = secret
+
+	// All nodes now have current version, should clear previous
+	if len(secret.NodesWithCurrent) == 2 {
+		secret.PreviousHash = ""
+		secret.NodesWithPrevious = []string{}
+		trackingData.Secrets["rabbitmq-secret"] = secret
+	}
+
+	// Verify cleanup after full rotation
+	secret = trackingData.Secrets["rabbitmq-secret"]
+	if secret.PreviousHash != "" {
+		t.Errorf("After full rotation PreviousHash = %s, want empty", secret.PreviousHash)
+	}
+	if len(secret.NodesWithPrevious) != 0 {
+		t.Errorf("After full rotation NodesWithPrevious count = %d, want 0", len(secret.NodesWithPrevious))
+	}
+	if len(secret.NodesWithCurrent) != 2 {
+		t.Errorf("After full rotation NodesWithCurrent count = %d, want 2", len(secret.NodesWithCurrent))
 	}
 }
