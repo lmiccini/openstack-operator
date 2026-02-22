@@ -819,8 +819,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) SetupWithManager(
 			handler.EnqueueRequestsFromMapFunc(r.secretWatcherFn),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{})).
 		Watches(&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.secretWatcherFn),
-			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{})).
+			handler.EnqueueRequestsFromMapFunc(r.secretWatcherFn)).
 		Watches(&openstackv1.OpenStackVersion{},
 			handler.EnqueueRequestsFromMapFunc(r.genericWatcherFn)).
 		// NOTE: MachineConfig watch is added conditionally during reconciliation
