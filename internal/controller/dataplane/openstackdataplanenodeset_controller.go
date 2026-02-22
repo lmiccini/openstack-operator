@@ -1083,11 +1083,15 @@ type SecretTrackingData struct {
 
 // SecretVersionInfo tracks a secret's current and previous versions across nodes
 type SecretVersionInfo struct {
-	CurrentHash       string    `json:"currentHash"`
-	PreviousHash      string    `json:"previousHash,omitempty"`
-	NodesWithCurrent  []string  `json:"nodesWithCurrent"`
-	NodesWithPrevious []string  `json:"nodesWithPrevious,omitempty"`
-	LastChanged       time.Time `json:"lastChanged"`
+	CurrentHash            string    `json:"currentHash"`
+	CurrentResourceVersion string    `json:"currentResourceVersion"`
+	CurrentGeneration      int64     `json:"currentGeneration"`
+	PreviousHash           string    `json:"previousHash,omitempty"`
+	PreviousResourceVersion string   `json:"previousResourceVersion,omitempty"`
+	PreviousGeneration     int64     `json:"previousGeneration,omitempty"`
+	NodesWithCurrent       []string  `json:"nodesWithCurrent"`
+	NodesWithPrevious      []string  `json:"nodesWithPrevious,omitempty"`
+	LastChanged            time.Time `json:"lastChanged"`
 }
 
 // NodeSecretStatus tracks which secrets a node has (current version)
@@ -1251,6 +1255,25 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 
 	// Process each secret in the deployment
 	for secretName, secretHash := range deployment.Status.SecretHashes {
+		// Fetch the secret from cluster to get ResourceVersion and Generation
+		secret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      secretName,
+			Namespace: instance.Namespace,
+		}, secret)
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				Log.Info("Secret in deployment not found in cluster, skipping tracking",
+					"secret", secretName)
+				continue
+			}
+			Log.Error(err, "Failed to fetch secret for tracking", "secret", secretName)
+			return err
+		}
+
+		resourceVersion := secret.ResourceVersion
+		generation := secret.Generation
+
 		secretInfo, exists := trackingData.Secrets[secretName]
 
 		if !exists {
@@ -1261,14 +1284,18 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			}
 
 			secretInfo = SecretVersionInfo{
-				CurrentHash:      secretHash,
-				NodesWithCurrent: nodesWithCurrent,
-				LastChanged:      time.Now(),
+				CurrentHash:            secretHash,
+				CurrentResourceVersion: resourceVersion,
+				CurrentGeneration:      generation,
+				NodesWithCurrent:       nodesWithCurrent,
+				LastChanged:            time.Now(),
 			}
 
 			Log.Info("New secret detected",
 				"secret", secretName,
 				"hash", secretHash,
+				"resourceVersion", resourceVersion,
+				"generation", generation,
 				"deploymentReady", isDeploymentReady,
 				"nodesWithCurrent", len(nodesWithCurrent))
 
@@ -1280,14 +1307,20 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				"secret", secretName,
 				"oldHash", secretInfo.CurrentHash,
 				"newHash", secretHash,
+				"oldResourceVersion", secretInfo.CurrentResourceVersion,
+				"newResourceVersion", resourceVersion,
 				"deploymentReady", isDeploymentReady)
 
 			// Move current to previous
 			secretInfo.PreviousHash = secretInfo.CurrentHash
+			secretInfo.PreviousResourceVersion = secretInfo.CurrentResourceVersion
+			secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
 			secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
 
 			// Update to new version
 			secretInfo.CurrentHash = secretHash
+			secretInfo.CurrentResourceVersion = resourceVersion
+			secretInfo.CurrentGeneration = generation
 			secretInfo.LastChanged = time.Now()
 
 			// Reset node tracking for new version
@@ -1300,6 +1333,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 						"secret", secretName,
 						"previousHash", secretInfo.PreviousHash)
 					secretInfo.PreviousHash = ""
+					secretInfo.PreviousResourceVersion = ""
+					secretInfo.PreviousGeneration = 0
 					secretInfo.NodesWithPrevious = []string{}
 				}
 			} else {
@@ -1333,6 +1368,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 						"secret", secretName,
 						"previousHash", secretInfo.PreviousHash)
 					secretInfo.PreviousHash = ""
+					secretInfo.PreviousResourceVersion = ""
+					secretInfo.PreviousGeneration = 0
 					secretInfo.NodesWithPrevious = []string{}
 				}
 			}
@@ -1384,10 +1421,13 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 }
 
 // detectSecretDrift checks if secrets in the K8s cluster have changed compared to
-// what's in the nodeset status (from the latest deployment). This prevents race conditions
+// what's tracked as deployed to nodes in the ConfigMap. This prevents race conditions
 // where credentials are rotated but status still shows AllNodesUpdated=true.
 //
-// Returns true if drift is detected (cluster secrets differ from nodeset status).
+// This function is fail-safe: if tracking ConfigMap is missing or can't be read,
+// it assumes drift (blocks deletion until tracking is updated).
+//
+// Returns true if drift is detected (cluster secrets differ from what's on nodes).
 func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 	ctx context.Context,
 	instance *dataplanev1.OpenStackDataPlaneNodeSet,
@@ -1395,17 +1435,18 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 ) (bool, error) {
 	Log := r.GetLogger(ctx)
 
-	if instance.Status.SecretHashes == nil || len(instance.Status.SecretHashes) == 0 {
-		// No secrets in status yet, no drift to detect
-		return false, nil
+	if trackingData == nil || len(trackingData.Secrets) == 0 {
+		// No tracking data yet - we don't know what's on nodes
+		// Fail-safe: assume drift (don't allow deletions until we have tracking)
+		Log.Info("No tracking data available, assuming drift (fail-safe)")
+		return true, nil
 	}
 
 	driftDetected := false
 
-	// Check each secret in nodeset status (from latest deployment)
-	// We compare instance.Status.SecretHashes (copied from deployment.Status.SecretHashes)
-	// with the current secrets in the cluster to detect if they changed after deployment.
-	for secretName, statusHash := range instance.Status.SecretHashes {
+	// Check each secret tracked as deployed to nodes
+	// Compare current K8s secret ResourceVersion/Generation with what's in tracking
+	for secretName, secretInfo := range trackingData.Secrets {
 		// Fetch current secret from cluster
 		secret := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{
@@ -1415,49 +1456,38 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 
 		if err != nil {
 			if k8s_errors.IsNotFound(err) {
-				// Secret deleted - this is drift
-				Log.Info("Secret drift detected: secret deleted from cluster",
+				// Secret deleted from cluster but still tracked as on nodes - this is drift
+				Log.Info("Secret drift detected: secret deleted from cluster but still on nodes",
 					"secret", secretName,
-					"statusHash", statusHash)
+					"trackedResourceVersion", secretInfo.CurrentResourceVersion)
 				driftDetected = true
 				continue
 			}
-			// Error fetching secret - be conservative and assume drift
-			Log.Error(err, "Failed to fetch secret for drift detection, assuming drift",
+			// Error fetching secret - fail-safe: assume drift
+			Log.Error(err, "Failed to fetch secret for drift detection, assuming drift (fail-safe)",
 				"secret", secretName)
 			return true, err
 		}
 
-		// Compute current hash
-		if secret.Data == nil {
-			// Empty secret - different from what was deployed
-			Log.Info("Secret drift detected: secret has no data",
-				"secret", secretName,
-				"statusHash", statusHash)
-			driftDetected = true
-			continue
-		}
+		// Compare ResourceVersion and Generation (deterministic, no hash issues)
+		currentResourceVersion := secret.ResourceVersion
+		currentGeneration := secret.Generation
 
-		currentHash, err := util.ObjectHash(secret.Data)
-		if err != nil {
-			Log.Error(err, "Failed to compute secret hash for drift detection",
-				"secret", secretName)
-			return true, err
-		}
-
-		// Compare current hash with status hash (from deployment)
-		if currentHash != statusHash {
-			Log.Info("Secret drift detected: hash mismatch",
+		if currentResourceVersion != secretInfo.CurrentResourceVersion ||
+			currentGeneration != secretInfo.CurrentGeneration {
+			Log.Info("Secret drift detected: secret changed in cluster",
 				"secret", secretName,
-				"currentHash", currentHash,
-				"statusHash", statusHash)
+				"trackedResourceVersion", secretInfo.CurrentResourceVersion,
+				"currentResourceVersion", currentResourceVersion,
+				"trackedGeneration", secretInfo.CurrentGeneration,
+				"currentGeneration", currentGeneration)
 			driftDetected = true
 		}
 	}
 
 	if driftDetected {
-		Log.Info("Secret drift detected - cluster secrets differ from nodeset status",
-			"secretsChecked", len(instance.Status.SecretHashes))
+		Log.Info("Secret drift detected - cluster secrets differ from what's deployed on nodes",
+			"secretsChecked", len(trackingData.Secrets))
 	}
 
 	return driftDetected, nil

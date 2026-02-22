@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	dataplanev1 "github.com/openstack-k8s-operators/openstack-operator/api/dataplane/v1beta1"
 )
 
@@ -898,25 +897,29 @@ func TestDetectSecretDrift(t *testing.T) {
 		{
 			name:         "no tracking data",
 			trackingData: nil,
-			wantDrift:    false,
+			wantDrift:    true, // fail-safe: no tracking = assume drift
 			wantErr:      false,
 		},
 		{
-			name: "no drift - hashes match",
+			name: "no drift - ResourceVersion and Generation match",
 			trackingData: &SecretTrackingData{
 				Secrets: map[string]SecretVersionInfo{
 					"rabbitmq-secret": {
-						CurrentHash:      "abc123",
-						NodesWithCurrent: []string{"node1", "node2"},
-						LastChanged:      now,
+						CurrentHash:            "abc123",
+						CurrentResourceVersion: "v1",
+						CurrentGeneration:      1,
+						NodesWithCurrent:       []string{"node1", "node2"},
+						LastChanged:            now,
 					},
 				},
 			},
 			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-secret",
-						Namespace: "test",
+						Name:            "rabbitmq-secret",
+						Namespace:       "test",
+						ResourceVersion: "v1",
+						Generation:      1,
 					},
 					Data: map[string][]byte{
 						"username": []byte("user"),
@@ -928,21 +931,25 @@ func TestDetectSecretDrift(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name: "drift detected - hash changed",
+			name: "drift detected - ResourceVersion changed",
 			trackingData: &SecretTrackingData{
 				Secrets: map[string]SecretVersionInfo{
 					"rabbitmq-secret": {
-						CurrentHash:      "old-hash",
-						NodesWithCurrent: []string{"node1", "node2"},
-						LastChanged:      now,
+						CurrentHash:            "old-hash",
+						CurrentResourceVersion: "v1",
+						CurrentGeneration:      1,
+						NodesWithCurrent:       []string{"node1", "node2"},
+						LastChanged:            now,
 					},
 				},
 			},
 			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-secret",
-						Namespace: "test",
+						Name:            "rabbitmq-secret",
+						Namespace:       "test",
+						ResourceVersion: "v2", // Changed
+						Generation:      1,
 					},
 					Data: map[string][]byte{
 						"username": []byte("newuser"),
@@ -958,9 +965,11 @@ func TestDetectSecretDrift(t *testing.T) {
 			trackingData: &SecretTrackingData{
 				Secrets: map[string]SecretVersionInfo{
 					"rabbitmq-secret": {
-						CurrentHash:      "abc123",
-						NodesWithCurrent: []string{"node1"},
-						LastChanged:      now,
+						CurrentHash:            "abc123",
+						CurrentResourceVersion: "v1",
+						CurrentGeneration:      1,
+						NodesWithCurrent:       []string{"node1"},
+						LastChanged:            now,
 					},
 				},
 			},
@@ -969,23 +978,30 @@ func TestDetectSecretDrift(t *testing.T) {
 			wantErr:   false,
 		},
 		{
-			name: "drift detected - secret has no data",
+			name: "drift detected - Generation changed",
 			trackingData: &SecretTrackingData{
 				Secrets: map[string]SecretVersionInfo{
 					"rabbitmq-secret": {
-						CurrentHash:      "abc123",
-						NodesWithCurrent: []string{"node1"},
-						LastChanged:      now,
+						CurrentHash:            "abc123",
+						CurrentResourceVersion: "v1",
+						CurrentGeneration:      1,
+						NodesWithCurrent:       []string{"node1"},
+						LastChanged:            now,
 					},
 				},
 			},
 			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "rabbitmq-secret",
-						Namespace: "test",
+						Name:            "rabbitmq-secret",
+						Namespace:       "test",
+						ResourceVersion: "v1",
+						Generation:      2, // Changed
 					},
-					Data: nil, // Empty data
+					Data: map[string][]byte{
+						"username": []byte("user"),
+						"password": []byte("pass"),
+					},
 				},
 			},
 			wantDrift: true,
@@ -996,31 +1012,39 @@ func TestDetectSecretDrift(t *testing.T) {
 			trackingData: &SecretTrackingData{
 				Secrets: map[string]SecretVersionInfo{
 					"secret1": {
-						CurrentHash:      "hash1",
-						NodesWithCurrent: []string{"node1"},
-						LastChanged:      now,
+						CurrentHash:            "hash1",
+						CurrentResourceVersion: "v1",
+						CurrentGeneration:      1,
+						NodesWithCurrent:       []string{"node1"},
+						LastChanged:            now,
 					},
 					"secret2": {
-						CurrentHash:      "old-hash",
-						NodesWithCurrent: []string{"node1"},
-						LastChanged:      now,
+						CurrentHash:            "old-hash",
+						CurrentResourceVersion: "v1",
+						CurrentGeneration:      1,
+						NodesWithCurrent:       []string{"node1"},
+						LastChanged:            now,
 					},
 				},
 			},
 			secrets: []*corev1.Secret{
 				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "secret1",
-						Namespace: "test",
+						Name:            "secret1",
+						Namespace:       "test",
+						ResourceVersion: "v1",
+						Generation:      1,
 					},
 					Data: map[string][]byte{"key": []byte("value1")},
 				},
 				{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "secret2",
-						Namespace: "test",
+						Name:            "secret2",
+						Namespace:       "test",
+						ResourceVersion: "v2", // Changed
+						Generation:      1,
 					},
-					Data: map[string][]byte{"key": []byte("newvalue")}, // Changed
+					Data: map[string][]byte{"key": []byte("newvalue")},
 				},
 			},
 			wantDrift: true,
@@ -1054,28 +1078,17 @@ func TestDetectSecretDrift(t *testing.T) {
 					Name:      "test-nodeset",
 					Namespace: "test",
 				},
-				Status: dataplanev1.OpenStackDataPlaneNodeSetStatus{
-					SecretHashes: make(map[string]string),
-				},
 			}
 
-			// Populate instance.Status.SecretHashes from trackingData
-			// This simulates what happens when deployment hashes are copied to nodeset status
-			if tt.trackingData != nil {
-				for secretName, secretInfo := range tt.trackingData.Secrets {
-					instance.Status.SecretHashes[secretName] = secretInfo.CurrentHash
-				}
-			}
-
-			// For no-drift cases, compute actual hashes and update both tracking and status
+			// For no-drift cases, update tracking data with actual secret ResourceVersion/Generation
 			if tt.trackingData != nil && !tt.wantDrift && len(tt.secrets) > 0 {
 				for secretName, secretInfo := range tt.trackingData.Secrets {
 					for _, secret := range tt.secrets {
-						if secret.Name == secretName && secret.Data != nil {
-							hash, _ := util.ObjectHash(secret.Data)
-							secretInfo.CurrentHash = hash
+						if secret.Name == secretName {
+							// Use the secret's ResourceVersion and Generation from the fake client
+							secretInfo.CurrentResourceVersion = secret.ResourceVersion
+							secretInfo.CurrentGeneration = secret.Generation
 							tt.trackingData.Secrets[secretName] = secretInfo
-							instance.Status.SecretHashes[secretName] = hash
 						}
 					}
 				}
