@@ -723,15 +723,16 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 					// Drift detected - secrets in cluster differ from what's deployed on nodes
 					helper.GetLogger().Info("Secret drift detected, updating status to block credential deletion")
 
-					// Update status to reflect that nodes need to be updated with new secrets
+					// Set AllNodesUpdated = false to prevent credential deletion
+					// Don't overwrite UpdatedNodes - it correctly shows how many nodes have
+					// the deployed version (even if cluster has a newer version)
 					instance.Status.SecretDeployment.AllNodesUpdated = false
-					instance.Status.SecretDeployment.UpdatedNodes = 0 // No nodes have the new version yet
 					now := v1.Now()
 					instance.Status.SecretDeployment.LastUpdateTime = &now
 
 					helper.GetLogger().Info("Status updated after drift detection",
 						"allNodesUpdated", false,
-						"updatedNodes", 0,
+						"updatedNodes", instance.Status.SecretDeployment.UpdatedNodes,
 						"totalNodes", instance.Status.SecretDeployment.TotalNodes)
 				}
 			}
@@ -1481,10 +1482,6 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 		} else if secretInfo.ExpectedResourceVersion != resourceVersion ||
 			secretInfo.ExpectedGeneration != generation {
 			// SECRET ROTATION: ResourceVersion/Generation changed (cluster secret changed)
-			// Deployment has current version if it was created after the rotation.
-			// Use LastChanged as the rotation timestamp.
-			deploymentHasCurrentVersion := deployment.CreationTimestamp.After(secretInfo.LastChanged)
-
 			Log.Info("Secret rotation detected",
 				"secret", secretName,
 				"oldCurrentHash", secretInfo.CurrentHash,
@@ -1492,10 +1489,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				"newHash", secretHash,
 				"oldResourceVersion", secretInfo.ExpectedResourceVersion,
 				"newResourceVersion", resourceVersion,
-				"deploymentReady", isDeploymentReady,
-				"deploymentCreated", deployment.CreationTimestamp.Time,
-				"secretLastChanged", secretInfo.LastChanged,
-				"deploymentHasCurrentVersion", deploymentHasCurrentVersion)
+				"deploymentReady", isDeploymentReady)
 
 			// Move Current to Previous (nodes not yet upgraded still have old version)
 			secretInfo.PreviousHash = secretInfo.CurrentHash
@@ -1510,16 +1504,12 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			secretInfo.ExpectedHash = secretHash
 			secretInfo.ExpectedResourceVersion = resourceVersion
 			secretInfo.ExpectedGeneration = generation
+			secretInfo.LastChanged = time.Now()
 
-			// Only update LastChanged if this is a NEW rotation (not already in progress)
-			// If PreviousHash is empty, this is the first time we're detecting this rotation
-			if secretInfo.PreviousHash == "" {
-				secretInfo.LastChanged = time.Now()
-			}
-
-			// Only update NodesWithCurrent if deployment was created AFTER rotation
-			// and deployment is ready
-			if isDeploymentReady && deploymentHasCurrentVersion {
+			// Update NodesWithCurrent if deployment is ready
+			// Trust that the deployment has whatever version it says it has
+			// Drift detection will determine if it's stale
+			if isDeploymentReady {
 				secretInfo.NodesWithCurrent = coveredNodes
 
 				// Clear previous version if all nodes now have current version
@@ -1533,15 +1523,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 					secretInfo.NodesWithPrevious = []string{}
 				}
 			} else {
-				// Deployment was created before rotation or not ready yet
-				// Nodes still have previous version
+				// Deployment not ready yet - nodes still have previous version
 				secretInfo.NodesWithCurrent = []string{}
-				if !deploymentHasCurrentVersion && isDeploymentReady {
-					Log.Info("Deployment has old secret version, not updating node tracking",
-						"secret", secretName,
-						"deploymentHash", secretHash,
-						"currentClusterResourceVersion", resourceVersion)
-				}
 			}
 
 		} else {
