@@ -536,6 +536,9 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 		latestRelevantDeployment = relevantDeployments[len(relevantDeployments)-1]
 	}
 
+	// Track if we updated tracking in this reconciliation (for drift detection skip logic)
+	updatedTrackingInThisReconciliation := false
+
 	for _, deployment := range relevantDeployments {
 		// Always add to DeploymentStatuses (for visibility)
 		deploymentConditions := deployment.Status.NodeSetConditions[instance.Name]
@@ -643,6 +646,7 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 					helper.GetLogger().Error(err, "Failed to update secret deployment tracking")
 					return false, false, false, "", err
 				}
+				updatedTrackingInThisReconciliation = true
 			}
 
 			// Now copy the hashes to nodeset status
@@ -698,17 +702,13 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	// but status still shows AllNodesUpdated=true (e.g., new RabbitMQUser created
 	// before deployment runs).
 	//
-	// Skip drift detection if tracking was just updated in this reconciliation (within last 5 seconds),
+	// Skip drift detection if tracking was just updated in THIS reconciliation due to a deployment,
 	// because deployment.Status.SecretHashes may be stale compared to current cluster secrets
 	// (e.g., cert-manager rotated certs after deployment completed).
-	skipDrift := false
-	if instance.Status.SecretDeployment != nil && instance.Status.SecretDeployment.LastUpdateTime != nil {
-		timeSinceUpdate := time.Since(instance.Status.SecretDeployment.LastUpdateTime.Time)
-		if timeSinceUpdate < 5*time.Second {
-			helper.GetLogger().Info("Skipping drift detection - tracking was just updated",
-				"timeSinceUpdate", timeSinceUpdate)
-			skipDrift = true
-		}
+	skipDrift := updatedTrackingInThisReconciliation
+
+	if skipDrift {
+		helper.GetLogger().Info("Skipping drift detection - tracking was updated in this reconciliation")
 	}
 
 	if instance.Status.SecretDeployment != nil && !skipDrift {
