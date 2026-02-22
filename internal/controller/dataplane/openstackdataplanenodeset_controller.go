@@ -948,34 +948,75 @@ func (r *OpenStackDataPlaneNodeSetReconciler) secretWatcherFn(
 	ctx context.Context, obj client.Object,
 ) []reconcile.Request {
 	Log := r.GetLogger(ctx)
-	nodeSets := &dataplanev1.OpenStackDataPlaneNodeSetList{}
 	kind := strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind)
+
+	// Track which nodesets we've already added to avoid duplicates
+	requestedNodeSets := make(map[string]bool)
+	requests := make([]reconcile.Request, 0)
+
+	// 1. Check for nodesets that reference this secret/configmap in ansibleVarsFrom
 	selector := "spec.ansibleVarsFrom.ansible.configMaps"
 	if kind == "secret" {
 		selector = "spec.ansibleVarsFrom.ansible.secrets"
 	}
 
+	nodeSets := &dataplanev1.OpenStackDataPlaneNodeSetList{}
 	listOpts := &client.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector(selector, obj.GetName()),
 		Namespace:     obj.GetNamespace(),
 	}
 
 	if err := r.List(ctx, nodeSets, listOpts); err != nil {
-		Log.Error(err, "Unable to retrieve OpenStackDataPlaneNodeSetList")
+		Log.Error(err, "Unable to retrieve OpenStackDataPlaneNodeSetList for ansibleVarsFrom")
 		return nil
 	}
 
-	requests := make([]reconcile.Request, 0, len(nodeSets.Items))
 	for _, nodeSet := range nodeSets.Items {
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: obj.GetNamespace(),
-				Name:      nodeSet.Name,
-			},
-		})
-		Log.Info(fmt.Sprintf("reconcile loop for openstackdataplanenodeset %s triggered by %s %s",
-			nodeSet.Name, kind, obj.GetName()))
+		key := fmt.Sprintf("%s/%s", nodeSet.Namespace, nodeSet.Name)
+		if !requestedNodeSets[key] {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      nodeSet.Name,
+				},
+			})
+			requestedNodeSets[key] = true
+			Log.Info(fmt.Sprintf("reconcile loop for openstackdataplanenodeset %s triggered by %s %s (ansibleVarsFrom)",
+				nodeSet.Name, kind, obj.GetName()))
+		}
 	}
+
+	// 2. Check for nodesets that have this secret tracked in status.SecretHashes
+	// This handles secrets like RabbitMQUser credentials that aren't in ansibleVarsFrom
+	// but are tracked for drift detection
+	if kind == "secret" {
+		allNodeSets := &dataplanev1.OpenStackDataPlaneNodeSetList{}
+		if err := r.List(ctx, allNodeSets, client.InNamespace(obj.GetNamespace())); err != nil {
+			Log.Error(err, "Unable to retrieve OpenStackDataPlaneNodeSetList for secret tracking")
+			return requests
+		}
+
+		for _, nodeSet := range allNodeSets.Items {
+			// Check if secret is in nodeset.Status.SecretHashes
+			if nodeSet.Status.SecretHashes != nil {
+				if _, exists := nodeSet.Status.SecretHashes[obj.GetName()]; exists {
+					key := fmt.Sprintf("%s/%s", nodeSet.Namespace, nodeSet.Name)
+					if !requestedNodeSets[key] {
+						requests = append(requests, reconcile.Request{
+							NamespacedName: types.NamespacedName{
+								Namespace: nodeSet.Namespace,
+								Name:      nodeSet.Name,
+							},
+						})
+						requestedNodeSets[key] = true
+						Log.Info(fmt.Sprintf("reconcile loop for openstackdataplanenodeset %s triggered by %s %s (tracked secret)",
+							nodeSet.Name, kind, obj.GetName()))
+					}
+				}
+			}
+		}
+	}
+
 	return requests
 }
 
