@@ -697,7 +697,21 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	// Runs on every reconciliation to catch when secrets change in the cluster
 	// but status still shows AllNodesUpdated=true (e.g., new RabbitMQUser created
 	// before deployment runs).
-	if instance.Status.SecretDeployment != nil {
+	//
+	// Skip drift detection if tracking was just updated in this reconciliation (within last 5 seconds),
+	// because deployment.Status.SecretHashes may be stale compared to current cluster secrets
+	// (e.g., cert-manager rotated certs after deployment completed).
+	skipDrift := false
+	if instance.Status.SecretDeployment != nil && instance.Status.SecretDeployment.LastUpdateTime != nil {
+		timeSinceUpdate := time.Since(instance.Status.SecretDeployment.LastUpdateTime.Time)
+		if timeSinceUpdate < 5*time.Second {
+			helper.GetLogger().Info("Skipping drift detection - tracking was just updated",
+				"timeSinceUpdate", timeSinceUpdate)
+			skipDrift = true
+		}
+	}
+
+	if instance.Status.SecretDeployment != nil && !skipDrift {
 		// Load current tracking data
 		trackingData, err := r.getSecretTrackingData(ctx, helper, instance)
 		if err != nil {
@@ -1370,10 +1384,10 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 }
 
 // detectSecretDrift checks if secrets in the K8s cluster have changed compared to
-// what's tracked as deployed to nodes. This prevents race conditions where credentials
-// are rotated but status still shows AllNodesUpdated=true.
+// what's in the nodeset status (from the latest deployment). This prevents race conditions
+// where credentials are rotated but status still shows AllNodesUpdated=true.
 //
-// Returns true if drift is detected (cluster secrets differ from deployed secrets).
+// Returns true if drift is detected (cluster secrets differ from nodeset status).
 func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 	ctx context.Context,
 	instance *dataplanev1.OpenStackDataPlaneNodeSet,
@@ -1381,15 +1395,17 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 ) (bool, error) {
 	Log := r.GetLogger(ctx)
 
-	if trackingData == nil || len(trackingData.Secrets) == 0 {
-		// No tracking data yet, no drift to detect
+	if instance.Status.SecretHashes == nil || len(instance.Status.SecretHashes) == 0 {
+		// No secrets in status yet, no drift to detect
 		return false, nil
 	}
 
 	driftDetected := false
 
-	// Check each tracked secret
-	for secretName, secretInfo := range trackingData.Secrets {
+	// Check each secret in nodeset status (from latest deployment)
+	// We compare instance.Status.SecretHashes (copied from deployment.Status.SecretHashes)
+	// with the current secrets in the cluster to detect if they changed after deployment.
+	for secretName, statusHash := range instance.Status.SecretHashes {
 		// Fetch current secret from cluster
 		secret := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{
@@ -1402,7 +1418,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 				// Secret deleted - this is drift
 				Log.Info("Secret drift detected: secret deleted from cluster",
 					"secret", secretName,
-					"trackedHash", secretInfo.CurrentHash)
+					"statusHash", statusHash)
 				driftDetected = true
 				continue
 			}
@@ -1417,7 +1433,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 			// Empty secret - different from what was deployed
 			Log.Info("Secret drift detected: secret has no data",
 				"secret", secretName,
-				"trackedHash", secretInfo.CurrentHash)
+				"statusHash", statusHash)
 			driftDetected = true
 			continue
 		}
@@ -1429,19 +1445,19 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 			return true, err
 		}
 
-		// Compare current hash with tracked hash
-		if currentHash != secretInfo.CurrentHash {
+		// Compare current hash with status hash (from deployment)
+		if currentHash != statusHash {
 			Log.Info("Secret drift detected: hash mismatch",
 				"secret", secretName,
 				"currentHash", currentHash,
-				"trackedHash", secretInfo.CurrentHash)
+				"statusHash", statusHash)
 			driftDetected = true
 		}
 	}
 
 	if driftDetected {
-		Log.Info("Secret drift detected - cluster secrets differ from deployed versions",
-			"secretsTracked", len(trackingData.Secrets))
+		Log.Info("Secret drift detected - cluster secrets differ from nodeset status",
+			"secretsChecked", len(instance.Status.SecretHashes))
 	}
 
 	return driftDetected, nil

@@ -1054,9 +1054,20 @@ func TestDetectSecretDrift(t *testing.T) {
 					Name:      "test-nodeset",
 					Namespace: "test",
 				},
+				Status: dataplanev1.OpenStackDataPlaneNodeSetStatus{
+					SecretHashes: make(map[string]string),
+				},
 			}
 
-			// If tracking has secrets, compute their actual hashes for no-drift cases
+			// Populate instance.Status.SecretHashes from trackingData
+			// This simulates what happens when deployment hashes are copied to nodeset status
+			if tt.trackingData != nil {
+				for secretName, secretInfo := range tt.trackingData.Secrets {
+					instance.Status.SecretHashes[secretName] = secretInfo.CurrentHash
+				}
+			}
+
+			// For no-drift cases, compute actual hashes and update both tracking and status
 			if tt.trackingData != nil && !tt.wantDrift && len(tt.secrets) > 0 {
 				for secretName, secretInfo := range tt.trackingData.Secrets {
 					for _, secret := range tt.secrets {
@@ -1064,6 +1075,7 @@ func TestDetectSecretDrift(t *testing.T) {
 							hash, _ := util.ObjectHash(secret.Data)
 							secretInfo.CurrentHash = hash
 							tt.trackingData.Secrets[secretName] = secretInfo
+							instance.Status.SecretHashes[secretName] = hash
 						}
 					}
 				}
