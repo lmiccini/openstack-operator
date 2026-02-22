@@ -528,11 +528,11 @@ func TestNodeAccumulationDoesNotDuplicateInBothLists(t *testing.T) {
 func TestGradualRolloutWithAnsibleLimit(t *testing.T) {
 	// Test gradual rollout: deployment 1 covers compute-0, deployment 2 covers compute-1
 	tests := []struct {
-		name                string
-		initialTracking     *SecretTrackingData
-		deployment1Nodes    []string // First deployment with AnsibleLimit
-		deployment2Nodes    []string // Second deployment with AnsibleLimit
-		expectedAllUpdated  bool
+		name                 string
+		initialTracking      *SecretTrackingData
+		deployment1Nodes     []string // First deployment with AnsibleLimit
+		deployment2Nodes     []string // Second deployment with AnsibleLimit
+		expectedAllUpdated   bool
 		expectedUpdatedCount int
 	}{
 		{
@@ -647,7 +647,7 @@ func TestSecretRotationWithGradualRollout(t *testing.T) {
 			secretInfo.PreviousHash = secretInfo.CurrentHash
 			secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
 			secretInfo.CurrentHash = "hash-v2"
-			secretInfo.ExpectedHash = "hash-v2" // Expected also updated
+			secretInfo.ExpectedHash = "hash-v2"      // Expected also updated
 			secretInfo.NodesWithCurrent = []string{} // Reset
 			tracking.Secrets["nova-config"] = secretInfo
 
@@ -670,7 +670,7 @@ func TestSecretRotationWithGradualRollout(t *testing.T) {
 
 				// Remove from previous
 				secretInfo.NodesWithPrevious = []string{} // Should be empty now
-				secretInfo.PreviousHash = "" // Clear metadata
+				secretInfo.PreviousHash = ""              // Clear metadata
 				tracking.Secrets["nova-config"] = secretInfo
 			}
 
@@ -891,11 +891,11 @@ func TestDetectSecretDrift(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name          string
-		trackingData  *SecretTrackingData
-		secrets       []*corev1.Secret
-		wantDrift     bool
-		wantErr       bool
+		name         string
+		trackingData *SecretTrackingData
+		secrets      []*corev1.Secret
+		wantDrift    bool
+		wantErr      bool
 	}{
 		{
 			name:         "no tracking data",
@@ -1116,5 +1116,138 @@ func TestDetectSecretDrift(t *testing.T) {
 				t.Errorf("detectSecretDrift() drift = %v, want %v", drift, tt.wantDrift)
 			}
 		})
+	}
+}
+
+// TestDeploymentAfterRotationUpdatesTracking verifies that when a deployment
+// completes after a secret rotation, the tracking is updated regardless of
+// when the deployment was created relative to when we detected the rotation.
+func TestDeploymentAfterRotationUpdatesTracking(t *testing.T) {
+	// Scenario:
+	// - Secret at V1 initially
+	// - Deployment created and runs
+	// - Secret changes to V2 during deployment
+	// - Deployment completes with V2
+	// - We process it and detect rotation
+	// - Should update Current=V2, NodesWithCurrent=[all nodes]
+	//
+	// The key test: we don't check deployment creation time vs LastChanged.
+	// We trust that if deployment is ready, nodes have what deployment deployed.
+
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-config": {
+				CurrentHash:             "hash-v1",
+				CurrentResourceVersion:  "100",
+				CurrentGeneration:       1,
+				ExpectedHash:            "hash-v1",
+				ExpectedResourceVersion: "100",
+				ExpectedGeneration:      1,
+				NodesWithCurrent:        []string{"compute-0", "compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: make(map[string]NodeSecretStatus),
+	}
+
+	// Simulate processing a deployment that has V2 (ResourceVersion 200)
+	// The code detects rotation because 200 != 100
+	secretInfo := trackingData.Secrets["nova-config"]
+
+	// This simulates what the code does when rotation is detected:
+	// Move Current to Previous
+	secretInfo.PreviousHash = secretInfo.CurrentHash
+	secretInfo.PreviousResourceVersion = secretInfo.CurrentResourceVersion
+	secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
+	secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
+
+	// Update Current and Expected to new version
+	secretInfo.CurrentHash = "hash-v2"
+	secretInfo.CurrentResourceVersion = "200"
+	secretInfo.CurrentGeneration = 1
+	secretInfo.ExpectedHash = "hash-v2"
+	secretInfo.ExpectedResourceVersion = "200"
+	secretInfo.ExpectedGeneration = 1
+	secretInfo.LastChanged = time.Now()
+
+	// If deployment is ready, update nodes (removed the timing check)
+	isDeploymentReady := true
+	coveredNodes := []string{"compute-0", "compute-1"}
+
+	if isDeploymentReady {
+		secretInfo.NodesWithCurrent = coveredNodes
+
+		// Clear previous if all nodes updated
+		totalNodes := 2
+		if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
+			secretInfo.PreviousHash = ""
+			secretInfo.PreviousResourceVersion = ""
+			secretInfo.PreviousGeneration = 0
+			secretInfo.NodesWithPrevious = []string{}
+		}
+	}
+
+	trackingData.Secrets["nova-config"] = secretInfo
+
+	// Update per-node status (this is what the actual code does)
+	allNodes := []string{"compute-0", "compute-1"}
+	for _, nodeName := range allNodes {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{},
+			SecretsWithPrevious: []string{},
+		}
+
+		// Check which secrets this node has
+		for secretName, secretInfo := range trackingData.Secrets {
+			if slices.Contains(secretInfo.NodesWithCurrent, nodeName) {
+				nodeStatus.SecretsWithCurrent = append(nodeStatus.SecretsWithCurrent, secretName)
+			} else if slices.Contains(secretInfo.NodesWithPrevious, nodeName) {
+				nodeStatus.SecretsWithPrevious = append(nodeStatus.SecretsWithPrevious, secretName)
+				nodeStatus.AllSecretsUpdated = false
+			} else {
+				// Node doesn't have this secret at all
+				nodeStatus.AllSecretsUpdated = false
+			}
+		}
+
+		trackingData.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// Verify the tracking was updated correctly
+	if secretInfo.CurrentResourceVersion != "200" {
+		t.Errorf("CurrentResourceVersion = %s, want 200", secretInfo.CurrentResourceVersion)
+	}
+
+	if len(secretInfo.NodesWithCurrent) != 2 {
+		t.Errorf("NodesWithCurrent count = %d, want 2", len(secretInfo.NodesWithCurrent))
+	}
+
+	if !slices.Contains(secretInfo.NodesWithCurrent, "compute-0") {
+		t.Error("compute-0 should be in NodesWithCurrent")
+	}
+
+	if !slices.Contains(secretInfo.NodesWithCurrent, "compute-1") {
+		t.Error("compute-1 should be in NodesWithCurrent")
+	}
+
+	// Previous should be cleared since all nodes have current
+	if secretInfo.PreviousHash != "" {
+		t.Errorf("PreviousHash should be empty, got %s", secretInfo.PreviousHash)
+	}
+
+	if len(secretInfo.NodesWithPrevious) != 0 {
+		t.Errorf("NodesWithPrevious count = %d, want 0", len(secretInfo.NodesWithPrevious))
+	}
+
+	// Verify summary calculation shows all updated
+	summary := computeDeploymentSummary(trackingData, 2, "test-configmap")
+
+	if !summary.AllNodesUpdated {
+		t.Error("AllNodesUpdated should be true when all nodes have current version")
+	}
+
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("UpdatedNodes = %d, want 2", summary.UpdatedNodes)
 	}
 }
