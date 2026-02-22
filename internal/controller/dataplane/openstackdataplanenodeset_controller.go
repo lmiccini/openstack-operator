@@ -1462,25 +1462,12 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				"deploymentReady", isDeploymentReady,
 				"nodesWithCurrent", len(nodesWithCurrent))
 
-		} else if secretInfo.ExpectedHash != secretHash ||
-			secretInfo.ExpectedResourceVersion != resourceVersion ||
+		} else if secretInfo.ExpectedResourceVersion != resourceVersion ||
 			secretInfo.ExpectedGeneration != generation {
-			// SECRET ROTATION: Expected changed (cluster secret changed)
-			// Check if deployment was created AFTER the secret rotation.
-			// If deployment was created before rotation, it has old version even if ready.
-
-			// Compute hash of current cluster secret to compare with deployment's hash
-			currentClusterHash, hashErr := util.ObjectHash(secret.Data)
-			if hashErr != nil {
-				Log.Error(hashErr, "Failed to hash secret data", "secret", secretName)
-				return hashErr
-			}
-
-			// deployment has current version if:
-			// 1. Its hash (from deployment.Status.SecretHashes) matches current cluster secret hash
-			// 2. OR it was created after we last detected secret change
-			deploymentHasCurrentVersion := (secretHash == currentClusterHash) ||
-				deployment.CreationTimestamp.After(secretInfo.LastChanged)
+			// SECRET ROTATION: ResourceVersion/Generation changed (cluster secret changed)
+			// Deployment has current version if it was created after the rotation.
+			// Use LastChanged as the rotation timestamp.
+			deploymentHasCurrentVersion := deployment.CreationTimestamp.After(secretInfo.LastChanged)
 
 			Log.Info("Secret rotation detected",
 				"secret", secretName,
@@ -1507,7 +1494,12 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			secretInfo.ExpectedHash = secretHash
 			secretInfo.ExpectedResourceVersion = resourceVersion
 			secretInfo.ExpectedGeneration = generation
-			secretInfo.LastChanged = time.Now()
+
+			// Only update LastChanged if this is a NEW rotation (not already in progress)
+			// If PreviousHash is empty, this is the first time we're detecting this rotation
+			if secretInfo.PreviousHash == "" {
+				secretInfo.LastChanged = time.Now()
+			}
 
 			// Only update NodesWithCurrent if deployment was created AFTER rotation
 			// and deployment is ready
