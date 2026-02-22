@@ -620,7 +620,25 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			// Track secrets when:
 			// 1. Config or secrets changed (normal case)
 			// 2. Status is empty (first-time tracking)
-			if configHashChanged || secretsChanged || instance.Status.SecretDeployment == nil {
+			// 3. ConfigMap is missing but status exists (recovery from deletion)
+			needsTracking := configHashChanged || secretsChanged || instance.Status.SecretDeployment == nil
+
+			// Check if ConfigMap exists when status exists (handle manual deletion)
+			if !needsTracking && instance.Status.SecretDeployment != nil {
+				configMapName := getSecretTrackingConfigMapName(instance.Name)
+				cm := &corev1.ConfigMap{}
+				err := helper.GetClient().Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: instance.Namespace,
+				}, cm)
+				if k8s_errors.IsNotFound(err) {
+					helper.GetLogger().Info("Tracking ConfigMap missing but status exists, forcing recreation",
+						"configMapName", configMapName)
+					needsTracking = true
+				}
+			}
+
+			if needsTracking {
 				if err := r.updateSecretDeploymentTracking(ctx, helper, instance, deployment); err != nil {
 					helper.GetLogger().Error(err, "Failed to update secret deployment tracking")
 					return false, false, false, "", err
@@ -671,6 +689,40 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 				// set the NodeSet's DeployedVersion to the Deployment's
 				// DeployedVersion.
 				instance.Status.DeployedVersion = deployment.Status.DeployedVersion
+			}
+		}
+	}
+
+	// Detect secret drift to prevent race conditions during credential rotation.
+	// Runs on every reconciliation to catch when secrets change in the cluster
+	// but status still shows AllNodesUpdated=true (e.g., new RabbitMQUser created
+	// before deployment runs).
+	if instance.Status.SecretDeployment != nil {
+		// Load current tracking data
+		trackingData, err := r.getSecretTrackingData(ctx, helper, instance)
+		if err != nil {
+			helper.GetLogger().Error(err, "Failed to load tracking data for drift detection")
+			// Don't fail reconciliation, but log the error
+		} else {
+			// Check for drift
+			driftDetected, err := r.detectSecretDrift(ctx, instance, trackingData)
+			if err != nil {
+				helper.GetLogger().Error(err, "Error during secret drift detection")
+				// Don't fail reconciliation, but log the error
+			} else if driftDetected {
+				// Drift detected - secrets in cluster differ from what's deployed on nodes
+				helper.GetLogger().Info("Secret drift detected, updating status to block credential deletion")
+
+				// Update status to reflect that nodes need to be updated with new secrets
+				instance.Status.SecretDeployment.AllNodesUpdated = false
+				instance.Status.SecretDeployment.UpdatedNodes = 0 // No nodes have the new version yet
+				now := v1.Now()
+				instance.Status.SecretDeployment.LastUpdateTime = &now
+
+				helper.GetLogger().Info("Status updated after drift detection",
+					"allNodesUpdated", false,
+					"updatedNodes", 0,
+					"totalNodes", instance.Status.SecretDeployment.TotalNodes)
 			}
 		}
 	}
@@ -1227,6 +1279,15 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			// Reset node tracking for new version
 			if isDeploymentReady {
 				secretInfo.NodesWithCurrent = coveredNodes
+
+				// Clear previous version if all nodes now have current version
+				if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
+					Log.Info("All nodes updated with new secret version after rotation, clearing previous",
+						"secret", secretName,
+						"previousHash", secretInfo.PreviousHash)
+					secretInfo.PreviousHash = ""
+					secretInfo.NodesWithPrevious = []string{}
+				}
 			} else {
 				secretInfo.NodesWithCurrent = []string{}
 			}
@@ -1239,9 +1300,20 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 					if !slices.Contains(secretInfo.NodesWithCurrent, node) {
 						secretInfo.NodesWithCurrent = append(secretInfo.NodesWithCurrent, node)
 					}
+
+					// Remove from previous if it was there (node upgraded)
+					if secretInfo.PreviousHash != "" {
+						newPrevious := []string{}
+						for _, prevNode := range secretInfo.NodesWithPrevious {
+							if prevNode != node {
+								newPrevious = append(newPrevious, prevNode)
+							}
+						}
+						secretInfo.NodesWithPrevious = newPrevious
+					}
 				}
 
-				// Clear previous version if all nodes now have current version
+				// Clear previous version metadata if all nodes now have current version
 				if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
 					Log.Info("All nodes updated with new secret version, clearing previous",
 						"secret", secretName,
@@ -1295,6 +1367,84 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 		"allNodesUpdated", instance.Status.SecretDeployment.AllNodesUpdated)
 
 	return nil
+}
+
+// detectSecretDrift checks if secrets in the K8s cluster have changed compared to
+// what's tracked as deployed to nodes. This prevents race conditions where credentials
+// are rotated but status still shows AllNodesUpdated=true.
+//
+// Returns true if drift is detected (cluster secrets differ from deployed secrets).
+func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
+	ctx context.Context,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	trackingData *SecretTrackingData,
+) (bool, error) {
+	Log := r.GetLogger(ctx)
+
+	if trackingData == nil || len(trackingData.Secrets) == 0 {
+		// No tracking data yet, no drift to detect
+		return false, nil
+	}
+
+	driftDetected := false
+
+	// Check each tracked secret
+	for secretName, secretInfo := range trackingData.Secrets {
+		// Fetch current secret from cluster
+		secret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      secretName,
+			Namespace: instance.Namespace,
+		}, secret)
+
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				// Secret deleted - this is drift
+				Log.Info("Secret drift detected: secret deleted from cluster",
+					"secret", secretName,
+					"trackedHash", secretInfo.CurrentHash)
+				driftDetected = true
+				continue
+			}
+			// Error fetching secret - be conservative and assume drift
+			Log.Error(err, "Failed to fetch secret for drift detection, assuming drift",
+				"secret", secretName)
+			return true, err
+		}
+
+		// Compute current hash
+		if secret.Data == nil {
+			// Empty secret - different from what was deployed
+			Log.Info("Secret drift detected: secret has no data",
+				"secret", secretName,
+				"trackedHash", secretInfo.CurrentHash)
+			driftDetected = true
+			continue
+		}
+
+		currentHash, err := util.ObjectHash(secret.Data)
+		if err != nil {
+			Log.Error(err, "Failed to compute secret hash for drift detection",
+				"secret", secretName)
+			return true, err
+		}
+
+		// Compare current hash with tracked hash
+		if currentHash != secretInfo.CurrentHash {
+			Log.Info("Secret drift detected: hash mismatch",
+				"secret", secretName,
+				"currentHash", currentHash,
+				"trackedHash", secretInfo.CurrentHash)
+			driftDetected = true
+		}
+	}
+
+	if driftDetected {
+		Log.Info("Secret drift detected - cluster secrets differ from deployed versions",
+			"secretsTracked", len(trackingData.Secrets))
+	}
+
+	return driftDetected, nil
 }
 
 // getNodesCoveredByDeployment determines which nodes were covered by a deployment
