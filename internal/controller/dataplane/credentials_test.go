@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/openstack-k8s-operators/lib-common/modules/common/util"
 	dataplanev1 "github.com/openstack-k8s-operators/openstack-operator/api/dataplane/v1beta1"
 )
 
@@ -628,11 +629,12 @@ func TestSecretRotationWithGradualRollout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Initial: all nodes have hash-v1
+			// Initial: all nodes have hash-v1 (Current == Expected, no drift)
 			tracking := &SecretTrackingData{
 				Secrets: map[string]SecretVersionInfo{
 					"nova-config": {
 						CurrentHash:      "hash-v1",
+						ExpectedHash:     "hash-v1",
 						NodesWithCurrent: []string{"compute-0", "compute-1"},
 						LastChanged:      time.Now(),
 					},
@@ -645,6 +647,7 @@ func TestSecretRotationWithGradualRollout(t *testing.T) {
 			secretInfo.PreviousHash = secretInfo.CurrentHash
 			secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
 			secretInfo.CurrentHash = "hash-v2"
+			secretInfo.ExpectedHash = "hash-v2" // Expected also updated
 			secretInfo.NodesWithCurrent = []string{} // Reset
 			tracking.Secrets["nova-config"] = secretInfo
 
@@ -1080,14 +1083,22 @@ func TestDetectSecretDrift(t *testing.T) {
 				},
 			}
 
-			// For no-drift cases, update tracking data with actual secret ResourceVersion/Generation
+			// For no-drift cases, update tracking data with actual secret metadata
+			// Set Current = Expected = actual secret values
 			if tt.trackingData != nil && !tt.wantDrift && len(tt.secrets) > 0 {
 				for secretName, secretInfo := range tt.trackingData.Secrets {
 					for _, secret := range tt.secrets {
-						if secret.Name == secretName {
-							// Use the secret's ResourceVersion and Generation from the fake client
+						if secret.Name == secretName && secret.Data != nil {
+							// Compute hash from secret data
+							hash, _ := util.ObjectHash(secret.Data)
+
+							// Set Current and Expected to match (no drift)
+							secretInfo.CurrentHash = hash
 							secretInfo.CurrentResourceVersion = secret.ResourceVersion
 							secretInfo.CurrentGeneration = secret.Generation
+							secretInfo.ExpectedHash = hash
+							secretInfo.ExpectedResourceVersion = secret.ResourceVersion
+							secretInfo.ExpectedGeneration = secret.Generation
 							tt.trackingData.Secrets[secretName] = secretInfo
 						}
 					}
