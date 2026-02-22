@@ -937,7 +937,23 @@ func (r *OpenStackDataPlaneNodeSetReconciler) secretWatcherFn(
 	ctx context.Context, obj client.Object,
 ) []reconcile.Request {
 	Log := r.GetLogger(ctx)
-	kind := strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind)
+
+	// Determine kind based on object type (GVK may not be populated in watch events)
+	var kind string
+	switch obj.(type) {
+	case *corev1.Secret:
+		kind = "secret"
+	case *corev1.ConfigMap:
+		kind = "configmap"
+	default:
+		// Fallback to GVK if available
+		kind = strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind)
+	}
+
+	Log.Info("secretWatcherFn called",
+		"kind", kind,
+		"name", obj.GetName(),
+		"namespace", obj.GetNamespace())
 
 	// Track which nodesets we've already added to avoid duplicates
 	requestedNodeSets := make(map[string]bool)
