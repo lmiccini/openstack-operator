@@ -2445,3 +2445,285 @@ func TestDriftDetectionResetsUpdatedNodesToZero(t *testing.T) {
 	// when drift is detected, preventing the confusing "updatedNodes: 2, allNodesUpdated: false"
 	// status that was reported by the user.
 }
+
+// TestMultipleNodeSetsIndependentTracking verifies that multiple nodesets track
+// their nodes independently, and that credential deletion should only happen when
+// ALL nodesets across ALL nodes are fully updated.
+//
+// Scenario: 2 nodesets (compute and storage), each with 2 nodes, sharing the same
+// RabbitMQ credentials (nova-cell1-compute-config). Credentials should only be
+// deleted when all 4 nodes (2 compute + 2 storage) are updated.
+func TestMultipleNodeSetsIndependentTracking(t *testing.T) {
+	// Shared secret used by both nodesets (e.g., RabbitMQ credentials)
+	sharedSecretName := "nova-cell1-compute-config"
+	oldHash := "hash-user7"
+	newHash := "hash-user8"
+
+	// NODESET 1: compute-nodes (2 nodes)
+	computeTracking := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			sharedSecretName: {
+				CurrentHash:             oldHash,
+				CurrentResourceVersion:  "100",
+				CurrentGeneration:       0,
+				ExpectedHash:            oldHash,
+				ExpectedResourceVersion: "100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"compute-0", "compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"compute-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{sharedSecretName},
+			},
+			"compute-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{sharedSecretName},
+			},
+		},
+	}
+
+	// NODESET 2: storage-nodes (2 nodes)
+	storageTracking := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			sharedSecretName: {
+				CurrentHash:             oldHash,
+				CurrentResourceVersion:  "100",
+				CurrentGeneration:       0,
+				ExpectedHash:            oldHash,
+				ExpectedResourceVersion: "100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"storage-0", "storage-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"storage-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{sharedSecretName},
+			},
+			"storage-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{sharedSecretName},
+			},
+		},
+	}
+
+	// Initial state: both nodesets fully updated with old credentials (user7)
+	computeSummary := computeDeploymentSummary(computeTracking, 2, "compute-tracking")
+	storageSummary := computeDeploymentSummary(storageTracking, 2, "storage-tracking")
+
+	if !computeSummary.AllNodesUpdated || !storageSummary.AllNodesUpdated {
+		t.Error("Initial state: both nodesets should be fully updated")
+	}
+
+	// STEP 1: Credential rotation - secret changes from user7 to user8
+	computeSecret := computeTracking.Secrets[sharedSecretName]
+	computeSecret.ExpectedHash = newHash
+	computeSecret.ExpectedResourceVersion = "101"
+	computeTracking.Secrets[sharedSecretName] = computeSecret
+
+	storageSecret := storageTracking.Secrets[sharedSecretName]
+	storageSecret.ExpectedHash = newHash
+	storageSecret.ExpectedResourceVersion = "101"
+	storageTracking.Secrets[sharedSecretName] = storageSecret
+
+	// After rotation: both nodesets detect drift
+	computeSummary = computeDeploymentSummary(computeTracking, 2, "compute-tracking")
+	storageSummary = computeDeploymentSummary(storageTracking, 2, "storage-tracking")
+
+	if computeSummary.AllNodesUpdated || storageSummary.AllNodesUpdated {
+		t.Error("After rotation: both nodesets should detect drift (AllNodesUpdated=false)")
+	}
+	if computeSummary.UpdatedNodes != 0 || storageSummary.UpdatedNodes != 0 {
+		t.Error("After rotation: drift detected, updatedNodes should be 0 for both")
+	}
+
+	// STEP 2: Deploy to COMPUTE nodeset only (both nodes)
+	// Simulate rotation: move Current to Previous, update Current to new version
+	computeSecret = computeTracking.Secrets[sharedSecretName]
+	computeSecret.PreviousHash = computeSecret.CurrentHash
+	computeSecret.PreviousResourceVersion = computeSecret.CurrentResourceVersion
+	computeSecret.PreviousGeneration = computeSecret.CurrentGeneration
+	computeSecret.NodesWithPrevious = computeSecret.NodesWithCurrent
+
+	computeSecret.CurrentHash = newHash
+	computeSecret.CurrentResourceVersion = "101"
+	computeSecret.CurrentGeneration = 0
+	computeSecret.NodesWithCurrent = []string{"compute-0", "compute-1"} // Both compute nodes deployed
+	computeSecret.LastChanged = time.Now()
+
+	// Clear previous since all compute nodes updated
+	if len(computeSecret.NodesWithCurrent) == 2 {
+		computeSecret.PreviousHash = ""
+		computeSecret.PreviousResourceVersion = ""
+		computeSecret.PreviousGeneration = 0
+		computeSecret.NodesWithPrevious = []string{}
+	}
+
+	computeTracking.Secrets[sharedSecretName] = computeSecret
+
+	// Update compute node status
+	for _, nodeName := range []string{"compute-0", "compute-1"} {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{sharedSecretName},
+			SecretsWithPrevious: []string{},
+		}
+		computeTracking.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// VERIFY: Compute nodeset fully updated
+	computeSummary = computeDeploymentSummary(computeTracking, 2, "compute-tracking")
+	if !computeSummary.AllNodesUpdated {
+		t.Error("After compute deployment: compute nodeset should be fully updated")
+	}
+	if computeSummary.UpdatedNodes != 2 {
+		t.Errorf("After compute deployment: updatedNodes = %d, want 2", computeSummary.UpdatedNodes)
+	}
+
+	// VERIFY: Storage nodeset NOT updated yet
+	storageSummary = computeDeploymentSummary(storageTracking, 2, "storage-tracking")
+	if storageSummary.AllNodesUpdated {
+		t.Error("After compute deployment: storage nodeset should NOT be updated yet")
+	}
+	if storageSummary.UpdatedNodes != 0 {
+		t.Errorf("After compute deployment: storage updatedNodes = %d, want 0 (drift still exists)", storageSummary.UpdatedNodes)
+	}
+
+	// CRITICAL CHECK: Credential deletion decision
+	// Old credentials (user7) should NOT be deleted because storage nodes still need them!
+	// Even though compute nodeset shows AllNodesUpdated=true, storage is still on old version
+	canDeleteOldCredentials := computeSummary.AllNodesUpdated && storageSummary.AllNodesUpdated
+	if canDeleteOldCredentials {
+		t.Error("CRITICAL: Old credentials should NOT be deleted - storage nodes still on old version!")
+	}
+
+	t.Logf("Compute nodeset: AllNodesUpdated=%v, UpdatedNodes=%d/%d",
+		computeSummary.AllNodesUpdated, computeSummary.UpdatedNodes, computeSummary.TotalNodes)
+	t.Logf("Storage nodeset: AllNodesUpdated=%v, UpdatedNodes=%d/%d",
+		storageSummary.AllNodesUpdated, storageSummary.UpdatedNodes, storageSummary.TotalNodes)
+	t.Logf("Can delete old credentials: %v (should be false)", canDeleteOldCredentials)
+
+	// STEP 3: Deploy to STORAGE nodeset (both nodes)
+	storageSecret = storageTracking.Secrets[sharedSecretName]
+	storageSecret.PreviousHash = storageSecret.CurrentHash
+	storageSecret.PreviousResourceVersion = storageSecret.CurrentResourceVersion
+	storageSecret.PreviousGeneration = storageSecret.CurrentGeneration
+	storageSecret.NodesWithPrevious = storageSecret.NodesWithCurrent
+
+	storageSecret.CurrentHash = newHash
+	storageSecret.CurrentResourceVersion = "101"
+	storageSecret.CurrentGeneration = 0
+	storageSecret.NodesWithCurrent = []string{"storage-0", "storage-1"} // Both storage nodes deployed
+	storageSecret.LastChanged = time.Now()
+
+	// Clear previous since all storage nodes updated
+	if len(storageSecret.NodesWithCurrent) == 2 {
+		storageSecret.PreviousHash = ""
+		storageSecret.PreviousResourceVersion = ""
+		storageSecret.PreviousGeneration = 0
+		storageSecret.NodesWithPrevious = []string{}
+	}
+
+	storageTracking.Secrets[sharedSecretName] = storageSecret
+
+	// Update storage node status
+	for _, nodeName := range []string{"storage-0", "storage-1"} {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{sharedSecretName},
+			SecretsWithPrevious: []string{},
+		}
+		storageTracking.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// VERIFY: Both nodesets now fully updated
+	computeSummary = computeDeploymentSummary(computeTracking, 2, "compute-tracking")
+	storageSummary = computeDeploymentSummary(storageTracking, 2, "storage-tracking")
+
+	if !computeSummary.AllNodesUpdated {
+		t.Error("Final: compute nodeset should be fully updated")
+	}
+	if !storageSummary.AllNodesUpdated {
+		t.Error("Final: storage nodeset should be fully updated")
+	}
+
+	// NOW safe to delete old credentials
+	canDeleteOldCredentials = computeSummary.AllNodesUpdated && storageSummary.AllNodesUpdated
+	if !canDeleteOldCredentials {
+		t.Error("Final: should be able to delete old credentials - all nodes updated")
+	}
+
+	t.Logf("Final - Compute nodeset: AllNodesUpdated=%v, UpdatedNodes=%d/%d",
+		computeSummary.AllNodesUpdated, computeSummary.UpdatedNodes, computeSummary.TotalNodes)
+	t.Logf("Final - Storage nodeset: AllNodesUpdated=%v, UpdatedNodes=%d/%d",
+		storageSummary.AllNodesUpdated, storageSummary.UpdatedNodes, storageSummary.TotalNodes)
+	t.Logf("Final - Can delete old credentials: %v (should be true)", canDeleteOldCredentials)
+
+	// STEP 4: Test gradual rollout across nodesets
+	// Reset to drift state
+	computeTracking.Secrets[sharedSecretName] = SecretVersionInfo{
+		CurrentHash:             newHash,
+		CurrentResourceVersion:  "101",
+		ExpectedHash:            "hash-user9", // Another rotation!
+		ExpectedResourceVersion: "102",
+		NodesWithCurrent:        []string{"compute-0", "compute-1"},
+	}
+	storageTracking.Secrets[sharedSecretName] = SecretVersionInfo{
+		CurrentHash:             newHash,
+		CurrentResourceVersion:  "101",
+		ExpectedHash:            "hash-user9",
+		ExpectedResourceVersion: "102",
+		NodesWithCurrent:        []string{"storage-0", "storage-1"},
+	}
+
+	// Deploy to compute-0 only (gradual rollout)
+	computeSecret = computeTracking.Secrets[sharedSecretName]
+	computeSecret.PreviousHash = computeSecret.CurrentHash
+	computeSecret.NodesWithPrevious = computeSecret.NodesWithCurrent
+	computeSecret.CurrentHash = "hash-user9"
+	computeSecret.NodesWithCurrent = []string{"compute-0"} // Only one node!
+	computeTracking.Secrets[sharedSecretName] = computeSecret
+
+	// Update node statuses
+	computeTracking.NodeStatus["compute-0"] = NodeSecretStatus{
+		AllSecretsUpdated:  true,
+		SecretsWithCurrent: []string{sharedSecretName},
+	}
+	computeTracking.NodeStatus["compute-1"] = NodeSecretStatus{
+		AllSecretsUpdated:   false,
+		SecretsWithPrevious: []string{sharedSecretName},
+	}
+
+	// Check status
+	computeSummary = computeDeploymentSummary(computeTracking, 2, "compute-tracking")
+	storageSummary = computeDeploymentSummary(storageTracking, 2, "storage-tracking")
+
+	// Verify gradual rollout state
+	if computeSummary.AllNodesUpdated {
+		t.Error("Gradual rollout: compute should NOT be fully updated (only 1/2 nodes)")
+	}
+	// Note: updatedNodes=1 is correct (compute-0 has current version, compute-1 has previous)
+	// There's no drift (Current==Expected for the secret), so we count nodes with current version
+	if computeSummary.UpdatedNodes != 1 {
+		t.Errorf("Gradual rollout: compute updatedNodes = %d, want 1 (compute-0 only)", computeSummary.UpdatedNodes)
+	}
+	if storageSummary.UpdatedNodes != 0 {
+		t.Errorf("Gradual rollout: storage updatedNodes = %d, want 0 (drift exists)", storageSummary.UpdatedNodes)
+	}
+
+	// Credentials should NOT be deleted - only 1 out of 4 total nodes updated
+	canDeleteOldCredentials = computeSummary.AllNodesUpdated && storageSummary.AllNodesUpdated
+	if canDeleteOldCredentials {
+		t.Error("Gradual rollout: should NOT delete credentials (only 1/4 nodes updated)")
+	}
+
+	t.Logf("Gradual rollout - Compute: AllNodesUpdated=%v, UpdatedNodes=%d/%d",
+		computeSummary.AllNodesUpdated, computeSummary.UpdatedNodes, computeSummary.TotalNodes)
+	t.Logf("Gradual rollout - Storage: AllNodesUpdated=%v, UpdatedNodes=%d/%d",
+		storageSummary.AllNodesUpdated, storageSummary.UpdatedNodes, storageSummary.TotalNodes)
+	t.Logf("Gradual rollout - Total nodes updated: 1/4 (compute-0 only)")
+}
