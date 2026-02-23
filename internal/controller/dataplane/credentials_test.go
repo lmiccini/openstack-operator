@@ -2386,3 +2386,62 @@ func TestStaleFullDeploymentAfterLimitedDeployment(t *testing.T) {
 	// CRITICAL: Credential deletion should be BLOCKED
 	// because only 1 of 2 nodes has the new version
 }
+
+// TestDriftDetectionResetsUpdatedNodesToZero verifies that when drift is detected,
+// updatedNodes is set to 0 to match the behavior of computeDeploymentSummary.
+// This prevents confusing status like "updatedNodes: 2, allNodesUpdated: false".
+func TestDriftDetectionResetsUpdatedNodesToZero(t *testing.T) {
+	// STEP 1: Both nodes have current version, no drift
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-cell1-compute-config": {
+				CurrentHash:             "hash-v1",
+				CurrentResourceVersion:  "100",
+				CurrentGeneration:       0,
+				ExpectedHash:            "hash-v1", // No drift
+				ExpectedResourceVersion: "100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"edpm-compute-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+			"edpm-compute-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+		},
+	}
+
+	// Initial state: no drift, all nodes updated
+	summary := computeDeploymentSummary(trackingData, 2, "test-cm")
+	if !summary.AllNodesUpdated {
+		t.Error("Initial: AllNodesUpdated should be true (no drift)")
+	}
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("Initial: UpdatedNodes = %d, want 2 (no drift)", summary.UpdatedNodes)
+	}
+
+	// STEP 2: Drift occurs - cluster secret changes to v2
+	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
+	secretInfo.ExpectedHash = "hash-v2"
+	secretInfo.ExpectedResourceVersion = "101"
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Verify drift changes the summary
+	summary = computeDeploymentSummary(trackingData, 2, "test-cm")
+	if summary.AllNodesUpdated {
+		t.Error("After drift: AllNodesUpdated should be false")
+	}
+	if summary.UpdatedNodes != 0 {
+		t.Errorf("After drift: UpdatedNodes = %d, want 0 (drift detected)", summary.UpdatedNodes)
+	}
+
+	// This test verifies that computeDeploymentSummary correctly sets updatedNodes=0
+	// when drift is detected, preventing the confusing "updatedNodes: 2, allNodesUpdated: false"
+	// status that was reported by the user.
+}

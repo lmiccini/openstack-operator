@@ -727,15 +727,17 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 					helper.GetLogger().Info("Secret drift detected, updating status to block credential deletion")
 
 					// Set AllNodesUpdated = false to prevent credential deletion
-					// Don't overwrite UpdatedNodes - it correctly shows how many nodes have
-					// the deployed version (even if cluster has a newer version)
+					// Set UpdatedNodes = 0 because nodes don't have the Expected (cluster) version
+					// This matches the logic in computeDeploymentSummary and prevents confusing
+					// status like "updatedNodes: 2, allNodesUpdated: false"
 					instance.Status.SecretDeployment.AllNodesUpdated = false
+					instance.Status.SecretDeployment.UpdatedNodes = 0
 					now := v1.Now()
 					instance.Status.SecretDeployment.LastUpdateTime = &now
 
 					helper.GetLogger().Info("Status updated after drift detection",
 						"allNodesUpdated", false,
-						"updatedNodes", instance.Status.SecretDeployment.UpdatedNodes,
+						"updatedNodes", 0,
 						"totalNodes", instance.Status.SecretDeployment.TotalNodes)
 				}
 			}
