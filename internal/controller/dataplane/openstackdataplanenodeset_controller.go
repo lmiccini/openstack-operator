@@ -1362,12 +1362,18 @@ func computeDeploymentSummary(
 	}
 
 	// Count nodes where all secrets are updated
+	// If there's drift, no nodes have the expected (cluster) version, so updatedNodes = 0
+	// This prevents confusing status like "updatedNodes: 2" while "allNodesUpdated: false"
 	updatedNodes := 0
-	for _, nodeStatus := range data.NodeStatus {
-		if nodeStatus.AllSecretsUpdated {
-			updatedNodes++
+	if !hasDrift {
+		// No drift - count nodes that have all secrets in current version
+		for _, nodeStatus := range data.NodeStatus {
+			if nodeStatus.AllSecretsUpdated {
+				updatedNodes++
+			}
 		}
 	}
+	// else: drift detected - all nodes are out of date relative to cluster, so updatedNodes = 0
 
 	// AllNodesUpdated = all nodes have all secrets AND no drift
 	allNodesUpdated := updatedNodes == totalNodes && totalNodes > 0 && !hasDrift

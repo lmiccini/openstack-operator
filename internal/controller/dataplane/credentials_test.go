@@ -250,6 +250,25 @@ func TestComputeDeploymentSummary(t *testing.T) {
 			expectedUpdated:    0,
 			expectedAllUpdated: false,
 		},
+		{
+			name: "drift detected - updatedNodes reset to 0",
+			trackingData: &SecretTrackingData{
+				Secrets: map[string]SecretVersionInfo{
+					"secret1": {
+						CurrentHash:      "hash-v1",
+						ExpectedHash:     "hash-v2", // Drift!
+						NodesWithCurrent: []string{"node1", "node2"},
+					},
+				},
+				NodeStatus: map[string]NodeSecretStatus{
+					"node1": {AllSecretsUpdated: true}, // Has current but not expected
+					"node2": {AllSecretsUpdated: true}, // Has current but not expected
+				},
+			},
+			totalNodes:         2,
+			expectedUpdated:    0, // Should be 0 when drift detected
+			expectedAllUpdated: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -826,11 +845,13 @@ func TestMultipleSecretsWithDifferentRolloutStates(t *testing.T) {
 		Secrets: map[string]SecretVersionInfo{
 			"secret-a": {
 				CurrentHash:      "hash-a1",
+				ExpectedHash:     "hash-a1", // No drift
 				NodesWithCurrent: []string{"compute-0", "compute-1"},
 				LastChanged:      time.Now(),
 			},
 			"secret-b": {
 				CurrentHash:       "hash-b2",
+				ExpectedHash:      "hash-b2", // No drift
 				PreviousHash:      "hash-b1",
 				NodesWithCurrent:  []string{"compute-0"},
 				NodesWithPrevious: []string{"compute-1"},
@@ -838,6 +859,7 @@ func TestMultipleSecretsWithDifferentRolloutStates(t *testing.T) {
 			},
 			"secret-c": {
 				CurrentHash:      "hash-c1",
+				ExpectedHash:     "hash-c1", // No drift
 				NodesWithCurrent: []string{"compute-0"},
 				LastChanged:      time.Now(),
 			},
@@ -1518,6 +1540,12 @@ func TestSecretRotationBetweenDeploymentAndReconciliation(t *testing.T) {
 
 	trackingData.Secrets["nova-config"] = secretInfo
 
+	// Set up node status - both nodes have the current (deployed) version
+	trackingData.NodeStatus = map[string]NodeSecretStatus{
+		"compute-0": {AllSecretsUpdated: true},
+		"compute-1": {AllSecretsUpdated: true},
+	}
+
 	// Verify final state
 	if secretInfo.CurrentHash != "hash-v2" {
 		t.Errorf("CurrentHash should be hash-v2 (what was deployed), got %s", secretInfo.CurrentHash)
@@ -1531,6 +1559,11 @@ func TestSecretRotationBetweenDeploymentAndReconciliation(t *testing.T) {
 	summary := computeDeploymentSummary(trackingData, 2, "test-cm")
 	if summary.AllNodesUpdated {
 		t.Error("AllNodesUpdated should be false when drift detected (Current != Expected)")
+	}
+
+	// UpdatedNodes should be 0 when there's drift (nodes don't have expected version)
+	if summary.UpdatedNodes != 0 {
+		t.Errorf("UpdatedNodes should be 0 when drift detected, got %d", summary.UpdatedNodes)
 	}
 
 	// This validates hash-based approach correctly handles the race condition
