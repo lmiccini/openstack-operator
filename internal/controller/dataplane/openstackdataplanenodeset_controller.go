@@ -75,6 +75,7 @@ const (
 // OpenStackDataPlaneNodeSetReconciler reconciles a OpenStackDataPlaneNodeSet object
 type OpenStackDataPlaneNodeSetReconciler struct {
 	client.Client
+	APIReader  client.Reader // Direct API reader that bypasses cache
 	Kclient    kubernetes.Interface
 	Scheme     *runtime.Scheme
 	Controller controller.Controller
@@ -710,10 +711,12 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	// just processed above. To work around this, we fetch the ConfigMap directly
 	// with a fresh read to bypass the cache.
 	if instance.Status.SecretDeployment != nil {
-		// Fetch ConfigMap directly to bypass client cache
+		// Fetch ConfigMap using APIReader to bypass client cache
+		// The regular client caches reads, causing drift detection to see stale data
+		// even after deployment processing just updated the ConfigMap.
 		configMapName := getSecretTrackingConfigMapName(instance.Name)
 		cm := &corev1.ConfigMap{}
-		err := helper.GetClient().Get(ctx, types.NamespacedName{
+		err := r.APIReader.Get(ctx, types.NamespacedName{
 			Name:      configMapName,
 			Namespace: instance.Namespace,
 		}, cm)
