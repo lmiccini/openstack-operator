@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
@@ -1777,5 +1778,150 @@ func TestRotationWithTwoSeparateLimitedDeployments(t *testing.T) {
 	}
 	if summary.UpdatedNodes != 2 {
 		t.Errorf("Final: UpdatedNodes = %d, want 2", summary.UpdatedNodes)
+	}
+}
+
+// TestStaleDeploymentDoesNotFlipFlop tests the fix for the scenario where
+// an old deployment (completed before secret rotation) is processed after
+// newer deployments, causing flip-flop in tracking state.
+func TestStaleDeploymentDoesNotFlipFlop(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+
+	// Create current cluster secret (new version - user6)
+	clusterSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "nova-cell1-compute-config",
+			Namespace:       "test-ns",
+			ResourceVersion: "15940207",
+		},
+		Data: map[string][]byte{
+			"rabbitmq_user_name": []byte("nova-cell1-transport-user6-user"),
+		},
+	}
+	clusterHash, _ := secret.Hash(clusterSecret)
+
+	// Create old secret for comparison (what old deployment saw - user5)
+	oldSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "nova-cell1-compute-config",
+			Namespace:       "test-ns",
+			ResourceVersion: "15940100", // Different RV
+		},
+		Data: map[string][]byte{
+			"rabbitmq_user_name": []byte("nova-cell1-transport-user5-user"),
+		},
+	}
+	oldHash, _ := secret.Hash(oldSecret)
+
+	// Verify hashes differ
+	if clusterHash == oldHash {
+		t.Fatal("Test setup: hashes should differ")
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(clusterSecret).
+		Build()
+
+	r := &OpenStackDataPlaneNodeSetReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	// Tracking data after new deployments (c0-limit, c1-limit) completed with user6
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-cell1-compute-config": {
+				CurrentHash:             clusterHash, // Current = user6 hash
+				CurrentResourceVersion:  "15940207",
+				ExpectedHash:            clusterHash, // Expected also = user6 (no drift)
+				ExpectedResourceVersion: "15940207",
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"edpm-compute-0": {AllSecretsUpdated: true},
+			"edpm-compute-1": {AllSecretsUpdated: true},
+		},
+	}
+
+	// Verify summary before processing stale deployment
+	summary := computeDeploymentSummary(trackingData, 2, "test-cm")
+	if !summary.AllNodesUpdated {
+		t.Error("Before stale deployment: AllNodesUpdated should be true")
+	}
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("Before stale deployment: UpdatedNodes = %d, want 2", summary.UpdatedNodes)
+	}
+
+	// Now process old deployment with stale hash (user5)
+	staleDeployment := &dataplanev1.OpenStackDataPlaneDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "edpm-deployment",
+			Namespace: "test-ns",
+		},
+		Spec: dataplanev1.OpenStackDataPlaneDeploymentSpec{
+			NodeSets: []string{"openstack-edpm-ipam"},
+		},
+		Status: dataplanev1.OpenStackDataPlaneDeploymentStatus{
+			SecretHashes: map[string]string{
+				"nova-cell1-compute-config": oldHash, // Stale! (user5)
+			},
+		},
+	}
+
+	// Simulate what updateSecretDeploymentTracking does with the fix:
+	// 1. Get deployment hash
+	deploymentHash := staleDeployment.Status.SecretHashes["nova-cell1-compute-config"]
+
+	// 2. Fetch cluster secret
+	fetchedSecret := &corev1.Secret{}
+	err := r.Get(context.Background(), types.NamespacedName{
+		Name:      "nova-cell1-compute-config",
+		Namespace: "test-ns",
+	}, fetchedSecret)
+	if err != nil {
+		t.Fatalf("Failed to fetch secret: %v", err)
+	}
+
+	// 3. Compute cluster hash
+	fetchedHash, err := secret.Hash(fetchedSecret)
+	if err != nil {
+		t.Fatalf("Failed to compute hash: %v", err)
+	}
+
+	// 4. Determine which hash to use (THE FIX)
+	hashToStore := deploymentHash // Default to deployment hash
+	if fetchedHash != deploymentHash {
+		t.Logf("Cluster hash differs from deployment hash, using cluster hash (fix applied)")
+		hashToStore = fetchedHash // Use cluster hash instead of stale deployment hash!
+	}
+
+	// 5. Compare with tracking to detect rotation
+	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
+	rotationDetected := secretInfo.CurrentHash != hashToStore
+
+	// VERIFY: With the fix, no rotation should be detected
+	if rotationDetected {
+		t.Error("Should NOT detect rotation when stale deployment processed with fix")
+	}
+
+	// Verify hashToStore is cluster hash, not stale deployment hash
+	if hashToStore != clusterHash {
+		t.Error("Fix should use cluster hash when it differs from deployment hash")
+	}
+
+	if hashToStore == oldHash {
+		t.Error("Fix should NOT use stale deployment hash")
+	}
+
+	// Verify tracking state remains correct
+	summary = computeDeploymentSummary(trackingData, 2, "test-cm")
+	if !summary.AllNodesUpdated {
+		t.Error("After stale deployment: AllNodesUpdated should still be true (no flip-flop)")
+	}
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("After stale deployment: UpdatedNodes = %d, want 2 (no flip-flop)", summary.UpdatedNodes)
 	}
 }

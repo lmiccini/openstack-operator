@@ -1495,21 +1495,24 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 		resourceVersion := clusterSecret.ResourceVersion
 		generation := clusterSecret.Generation
 
-		// Defensive verification: check if cluster secret hash matches deployment hash
-		// This is informational - if they differ, it means secret rotated after deployment
+		// Determine which hash to use: prefer current cluster state over stale deployment state
+		// This prevents issues when old deployments are processed after secret changes
 		clusterSecretHash, hashErr := secret.Hash(clusterSecret)
+		hashToStore := secretHash // Default to deployment hash
 		if hashErr != nil {
-			Log.Error(hashErr, "Failed to compute cluster secret hash for verification",
+			Log.Error(hashErr, "Failed to compute cluster secret hash, using deployment hash",
 				"secret", secretName,
 				"deployment", deployment.Name)
 			// Non-fatal - continue with deployment hash
 		} else if clusterSecretHash != secretHash {
-			Log.Info("Cluster secret hash differs from deployment hash (expected if secret rotated after deployment)",
+			Log.Info("Cluster secret hash differs from deployment hash, using current cluster hash",
 				"secret", secretName,
 				"deployment", deployment.Name,
 				"deploymentHash", secretHash,
 				"clusterHash", clusterSecretHash,
 				"clusterResourceVersion", resourceVersion)
+			// Use cluster hash to ensure tracking reflects current state, not stale deployment state
+			hashToStore = clusterSecretHash
 		}
 
 		secretInfo, exists := trackingData.Secrets[secretName]
@@ -1522,7 +1525,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			}
 
 			secretInfo = SecretVersionInfo{
-				CurrentHash:             secretHash,
+				CurrentHash:             hashToStore,
 				CurrentResourceVersion:  resourceVersion,
 				CurrentGeneration:       generation,
 				NodesWithCurrent:        nodesWithCurrent,
@@ -1533,22 +1536,21 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				"secret", secretName,
 				"deployment", deployment.Name,
 				"namespace", deployment.Namespace,
-				"hash", secretHash,
+				"hash", hashToStore,
 				"resourceVersion", resourceVersion,
 				"generation", generation,
 				"deploymentReady", isDeploymentReady,
 				"nodesWithCurrent", len(nodesWithCurrent))
 
-		} else if secretInfo.CurrentHash != secretHash {
+		} else if secretInfo.CurrentHash != hashToStore {
 			// SECRET ROTATION: Deployment hash different from currently tracked
-			// Use hash comparison (from deployment.Status) instead of ResourceVersion comparison
-			// This avoids timing issues where cluster secret changes between deployment start/finish
+			// Use current cluster hash to ensure tracking reflects current state
 			Log.Info("Secret rotation detected in deployment",
 				"secret", secretName,
 				"deployment", deployment.Name,
 				"namespace", deployment.Namespace,
 				"oldCurrentHash", secretInfo.CurrentHash,
-				"newHash", secretHash,
+				"newHash", hashToStore,
 				"oldResourceVersion", secretInfo.CurrentResourceVersion,
 				"newResourceVersion", resourceVersion,
 				"deploymentReady", isDeploymentReady)
@@ -1559,10 +1561,9 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
 			secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
 
-			// Update Current to new version from deployment
-			// Use hash from deployment.Status (what deployment saw)
-			// Use ResourceVersion/Generation from cluster (for drift detection metadata)
-			secretInfo.CurrentHash = secretHash
+			// Update Current to new version - use cluster hash not deployment hash
+			// This ensures old deployments don't flip-flop the tracking state
+			secretInfo.CurrentHash = hashToStore
 			secretInfo.CurrentResourceVersion = resourceVersion
 			secretInfo.CurrentGeneration = generation
 			secretInfo.LastChanged = time.Now()
