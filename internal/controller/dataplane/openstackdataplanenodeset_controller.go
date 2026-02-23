@@ -18,8 +18,11 @@ package dataplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,6 +52,7 @@ import (
 	"github.com/go-logr/logr"
 	infranetworkv1 "github.com/openstack-k8s-operators/infra-operator/apis/network/v1beta1"
 	condition "github.com/openstack-k8s-operators/lib-common/modules/common/condition"
+	"github.com/openstack-k8s-operators/lib-common/modules/common/configmap"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/helper"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/rolebinding"
 	"github.com/openstack-k8s-operators/lib-common/modules/common/secret"
@@ -404,7 +408,7 @@ func (r *OpenStackDataPlaneNodeSetReconciler) Reconcile(ctx context.Context, req
 	}
 
 	isDeploymentReady, isDeploymentRunning, isDeploymentFailed, failedDeployment, err := checkDeployment(
-		ctx, helper, instance)
+		ctx, helper, instance, r)
 	if !isDeploymentFailed && err != nil {
 		instance.Status.Conditions.MarkFalse(
 			condition.DeploymentReadyCondition,
@@ -489,7 +493,8 @@ func (r *OpenStackDataPlaneNodeSetReconciler) Reconcile(ctx context.Context, req
 }
 
 func checkDeployment(ctx context.Context, helper *helper.Helper,
-	instance *dataplanev1.OpenStackDataPlaneNodeSet) (
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	r *OpenStackDataPlaneNodeSetReconciler) (
 	isNodeSetDeploymentReady bool, isNodeSetDeploymentRunning bool,
 	isNodeSetDeploymentFailed bool, failedDeploymentName string, err error) {
 
@@ -589,6 +594,24 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			}
 
 			isNodeSetDeploymentReady = true
+
+			newDeployedConfigHash, hasNodeSetHash := deployment.Status.NodeSetHashes[instance.Name]
+			if !hasNodeSetHash {
+				helper.GetLogger().Info("Deployment missing NodeSetHash, skipping credential tracking",
+					"deployment", deployment.Name,
+					"nodeset", instance.Name)
+				newDeployedConfigHash = ""
+			}
+
+			// Update secret deployment tracking BEFORE copying hashes
+			if len(deployment.Status.SecretHashes) > 0 {
+				if err := r.updateSecretTracking(ctx, helper, instance, deployment); err != nil {
+					helper.GetLogger().Error(err, "Failed to update secret deployment tracking")
+					return false, false, false, "", err
+				}
+			}
+
+			// Copy hashes to nodeset status
 			for k, v := range deployment.Status.ConfigMapHashes {
 				instance.Status.ConfigMapHashes[k] = v
 			}
@@ -601,7 +624,7 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			for k, v := range deployment.Status.ContainerImages {
 				instance.Status.ContainerImages[k] = v
 			}
-			instance.Status.DeployedConfigHash = deployment.Status.NodeSetHashes[instance.Name]
+			instance.Status.DeployedConfigHash = newDeployedConfigHash
 
 			// Get list of services by name, either from ServicesOverride or
 			// the NodeSet.
@@ -636,6 +659,30 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 				// DeployedVersion.
 				instance.Status.DeployedVersion = deployment.Status.DeployedVersion
 			}
+		}
+	}
+
+	// Detect secret drift: compare cluster secrets with what was deployed.
+	// Runs every reconciliation to catch when secrets change (e.g., credential
+	// rotation, cert-manager renewal) before a new deployment runs.
+	if instance.Status.SecretDeployment != nil && len(instance.Status.SecretHashes) > 0 {
+		trackedSecretNames := make([]string, 0, len(instance.Status.SecretHashes))
+		for name := range instance.Status.SecretHashes {
+			trackedSecretNames = append(trackedSecretNames, name)
+		}
+		clusterHash, hashErr := r.computeClusterSecretHash(ctx, instance.Namespace, trackedSecretNames)
+		if hashErr != nil {
+			helper.GetLogger().Error(hashErr, "Failed to compute cluster secret hash for drift detection")
+		} else if instance.Status.SecretDeployment.DeployedSecretHash != "" &&
+			clusterHash != instance.Status.SecretDeployment.DeployedSecretHash {
+			helper.GetLogger().Info("Secret drift detected, blocking credential deletion",
+				"deployedHash", instance.Status.SecretDeployment.DeployedSecretHash,
+				"clusterHash", clusterHash)
+			instance.Status.SecretDeployment.AllNodesUpdated = false
+			instance.Status.SecretDeployment.UpdatedNodes = 0
+			instance.Status.SecretDeployment.DeployedSecretHash = ""
+			now := v1.Now()
+			instance.Status.SecretDeployment.LastUpdateTime = &now
 		}
 	}
 
@@ -696,6 +743,20 @@ func (r *OpenStackDataPlaneNodeSetReconciler) SetupWithManager(
 		}); err != nil {
 		return err
 	}
+	// index for secrets tracked in status.SecretHashes (for drift detection triggers)
+	if err := mgr.GetFieldIndexer().IndexField(ctx,
+		&dataplanev1.OpenStackDataPlaneNodeSet{}, "status.secretHashes.keys",
+		func(rawObj client.Object) []string {
+			nodeSet := rawObj.(*dataplanev1.OpenStackDataPlaneNodeSet)
+			keys := make([]string, 0, len(nodeSet.Status.SecretHashes))
+			for k := range nodeSet.Status.SecretHashes {
+				keys = append(keys, k)
+			}
+			return keys
+		}); err != nil {
+		return err
+	}
+
 	// Initialize the Watching map for conditional CRD watches
 	r.Watching = make(map[string]bool)
 	r.Cache = mgr.GetCache()
@@ -839,34 +900,89 @@ func (r *OpenStackDataPlaneNodeSetReconciler) secretWatcherFn(
 	ctx context.Context, obj client.Object,
 ) []reconcile.Request {
 	Log := r.GetLogger(ctx)
-	nodeSets := &dataplanev1.OpenStackDataPlaneNodeSetList{}
-	kind := strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind)
+
+	// Determine kind based on object type (GVK may not be populated in watch events)
+	var kind string
+	switch obj.(type) {
+	case *corev1.Secret:
+		kind = "secret"
+	case *corev1.ConfigMap:
+		kind = "configmap"
+	default:
+		// Fallback to GVK if available
+		kind = strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind)
+	}
+
+	Log.V(1).Info("secretWatcherFn called",
+		"kind", kind,
+		"name", obj.GetName(),
+		"namespace", obj.GetNamespace())
+
+	// Track which nodesets we've already added to avoid duplicates
+	requestedNodeSets := make(map[string]bool)
+	requests := make([]reconcile.Request, 0)
+
+	// 1. Check for nodesets that reference this secret/configmap in ansibleVarsFrom
 	selector := "spec.ansibleVarsFrom.ansible.configMaps"
 	if kind == "secret" {
 		selector = "spec.ansibleVarsFrom.ansible.secrets"
 	}
 
+	nodeSets := &dataplanev1.OpenStackDataPlaneNodeSetList{}
 	listOpts := &client.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector(selector, obj.GetName()),
 		Namespace:     obj.GetNamespace(),
 	}
 
 	if err := r.List(ctx, nodeSets, listOpts); err != nil {
-		Log.Error(err, "Unable to retrieve OpenStackDataPlaneNodeSetList")
+		Log.Error(err, "Unable to retrieve OpenStackDataPlaneNodeSetList for ansibleVarsFrom")
 		return nil
 	}
 
-	requests := make([]reconcile.Request, 0, len(nodeSets.Items))
 	for _, nodeSet := range nodeSets.Items {
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: obj.GetNamespace(),
-				Name:      nodeSet.Name,
-			},
-		})
-		Log.Info(fmt.Sprintf("reconcile loop for openstackdataplanenodeset %s triggered by %s %s",
-			nodeSet.Name, kind, obj.GetName()))
+		key := fmt.Sprintf("%s/%s", nodeSet.Namespace, nodeSet.Name)
+		if !requestedNodeSets[key] {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      nodeSet.Name,
+				},
+			})
+			requestedNodeSets[key] = true
+			Log.Info(fmt.Sprintf("reconcile loop for openstackdataplanenodeset %s triggered by %s %s (ansibleVarsFrom)",
+				nodeSet.Name, kind, obj.GetName()))
+		}
 	}
+
+	// 2. Check for nodesets that have this secret tracked in status.SecretHashes
+	// Uses a field index to avoid listing all nodesets in the namespace
+	if kind == "secret" {
+		trackedNodeSets := &dataplanev1.OpenStackDataPlaneNodeSetList{}
+		trackedOpts := &client.ListOptions{
+			FieldSelector: fields.OneTermEqualSelector("status.secretHashes.keys", obj.GetName()),
+			Namespace:     obj.GetNamespace(),
+		}
+		if err := r.List(ctx, trackedNodeSets, trackedOpts); err != nil {
+			Log.Error(err, "Unable to retrieve OpenStackDataPlaneNodeSetList for secret tracking")
+			return requests
+		}
+
+		for _, nodeSet := range trackedNodeSets.Items {
+			key := fmt.Sprintf("%s/%s", nodeSet.Namespace, nodeSet.Name)
+			if !requestedNodeSets[key] {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Namespace: nodeSet.Namespace,
+						Name:      nodeSet.Name,
+					},
+				})
+				requestedNodeSets[key] = true
+				Log.Info(fmt.Sprintf("reconcile loop for openstackdataplanenodeset %s triggered by %s %s (tracked secret)",
+					nodeSet.Name, kind, obj.GetName()))
+			}
+		}
+	}
+
 	return requests
 }
 
@@ -971,4 +1087,277 @@ func checkAnsibleVarsFromChanged(
 	}
 
 	return false, nil
+}
+
+// DeployedNodeTracking is the simplified structure stored in the tracking ConfigMap.
+// It records which nodes have been deployed since the last secret change.
+type DeployedNodeTracking struct {
+	DeployedSecretHash string   `json:"deployedSecretHash"`
+	DeployedNodes      []string `json:"deployedNodes"`
+}
+
+// computeCompositeSecretHash produces a single hash from a map of secret name→hash pairs.
+// Sorts keys for determinism, concatenates "name=hash" pairs, then SHA-256s the result.
+func computeCompositeSecretHash(secretHashes map[string]string) string {
+	if len(secretHashes) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(secretHashes))
+	for name := range secretHashes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	for i, name := range names {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(secretHashes[name])
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("%x", sum)
+}
+
+// getSecretTrackingConfigMapName returns the name of the tracking ConfigMap for a nodeset
+func getSecretTrackingConfigMapName(nodesetName string) string {
+	return dataplanev1.GetSecretTrackingConfigMapName(nodesetName)
+}
+
+// computeClusterSecretHash fetches the given secrets from the cluster and
+// produces a composite hash representing their current state.
+// secretNames specifies which secrets to hash.
+func (r *OpenStackDataPlaneNodeSetReconciler) computeClusterSecretHash(
+	ctx context.Context,
+	namespace string,
+	secretNames []string,
+) (string, error) {
+	if len(secretNames) == 0 {
+		return "", nil
+	}
+
+	currentHashes := make(map[string]string, len(secretNames))
+	for _, secretName := range secretNames {
+		clusterSecret := &corev1.Secret{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      secretName,
+			Namespace: namespace,
+		}, clusterSecret)
+		if err != nil {
+			if k8s_errors.IsNotFound(err) {
+				currentHashes[secretName] = ""
+				continue
+			}
+			return "", fmt.Errorf("failed to fetch secret %s: %w", secretName, err)
+		}
+		h, err := secret.Hash(clusterSecret)
+		if err != nil {
+			return "", fmt.Errorf("failed to hash secret %s: %w", secretName, err)
+		}
+		currentHashes[secretName] = h
+	}
+
+	return computeCompositeSecretHash(currentHashes), nil
+}
+
+// loadDeployedNodeTracking reads the tracking ConfigMap and returns the tracked state.
+// Returns empty tracking if the ConfigMap does not exist or contains invalid data.
+func (r *OpenStackDataPlaneNodeSetReconciler) loadDeployedNodeTracking(
+	ctx context.Context,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+) (*DeployedNodeTracking, error) {
+	cm := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      getSecretTrackingConfigMapName(instance.Name),
+		Namespace: instance.Namespace,
+	}, cm)
+	if err != nil {
+		if k8s_errors.IsNotFound(err) {
+			return &DeployedNodeTracking{}, nil
+		}
+		return nil, err
+	}
+
+	trackingJSON := cm.Data["tracking.json"]
+	if trackingJSON == "" {
+		return &DeployedNodeTracking{}, nil
+	}
+
+	var data DeployedNodeTracking
+	if err := json.Unmarshal([]byte(trackingJSON), &data); err != nil {
+		return &DeployedNodeTracking{}, nil
+	}
+	return &data, nil
+}
+
+// saveDeployedNodeTracking writes the tracking data to the ConfigMap.
+func (r *OpenStackDataPlaneNodeSetReconciler) saveDeployedNodeTracking(
+	ctx context.Context,
+	helper *helper.Helper,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	data *DeployedNodeTracking,
+) error {
+	trackingJSON, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tracking data: %w", err)
+	}
+
+	cms := []util.Template{
+		{
+			Name:         getSecretTrackingConfigMapName(instance.Name),
+			Namespace:    instance.Namespace,
+			InstanceType: instance.Kind,
+			CustomData:   map[string]string{"tracking.json": string(trackingJSON)},
+		},
+	}
+	return configmap.EnsureConfigMaps(ctx, helper, instance, cms, nil)
+}
+
+// updateSecretTracking updates the deployed node tracking when a deployment completes.
+func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretTracking(
+	ctx context.Context,
+	helper *helper.Helper,
+	instance *dataplanev1.OpenStackDataPlaneNodeSet,
+	deploy *dataplanev1.OpenStackDataPlaneDeployment,
+) error {
+	Log := r.GetLogger(ctx)
+
+	deploymentHash := computeCompositeSecretHash(deploy.Status.SecretHashes)
+	if deploymentHash == "" {
+		return nil
+	}
+
+	secretNames := make([]string, 0, len(deploy.Status.SecretHashes))
+	for name := range deploy.Status.SecretHashes {
+		secretNames = append(secretNames, name)
+	}
+
+	clusterHash, err := r.computeClusterSecretHash(ctx, instance.Namespace, secretNames)
+	if err != nil {
+		return err
+	}
+
+	if deploymentHash != clusterHash {
+		Log.V(1).Info("Deployment secrets are stale, skipping tracking",
+			"deployment", deploy.Name,
+			"deploymentHash", deploymentHash,
+			"clusterHash", clusterHash)
+		return nil
+	}
+
+	allNodes := getAllNodeNames(instance)
+	totalNodes := len(allNodes)
+	coveredNodes := getNodesCoveredByDeployment(deploy, instance)
+
+	tracking, err := r.loadDeployedNodeTracking(ctx, instance)
+	if err != nil {
+		return err
+	}
+
+	if tracking.DeployedSecretHash != deploymentHash {
+		tracking.DeployedSecretHash = deploymentHash
+		tracking.DeployedNodes = nil
+	}
+
+	isReady := deploy.Status.Conditions.IsTrue(condition.DeploymentReadyCondition)
+	if isReady {
+		for _, node := range coveredNodes {
+			if !slices.Contains(tracking.DeployedNodes, node) {
+				tracking.DeployedNodes = append(tracking.DeployedNodes, node)
+			}
+		}
+	}
+
+	// Prune nodes no longer in the nodeset spec
+	validNodes := make([]string, 0, len(tracking.DeployedNodes))
+	for _, node := range tracking.DeployedNodes {
+		if slices.Contains(allNodes, node) {
+			validNodes = append(validNodes, node)
+		}
+	}
+	tracking.DeployedNodes = validNodes
+
+	if err := r.saveDeployedNodeTracking(ctx, helper, instance, tracking); err != nil {
+		return err
+	}
+
+	updatedNodes := len(tracking.DeployedNodes)
+	allUpdated := updatedNodes == totalNodes && totalNodes > 0
+	now := v1.Now()
+	instance.Status.SecretDeployment = &dataplanev1.SecretDeploymentStatus{
+		AllNodesUpdated:    allUpdated,
+		TotalNodes:         totalNodes,
+		UpdatedNodes:       updatedNodes,
+		DeployedSecretHash: deploymentHash,
+		LastUpdateTime:     &now,
+	}
+
+	Log.Info("Secret deployment tracking updated",
+		"deployment", deploy.Name,
+		"totalNodes", totalNodes,
+		"updatedNodes", updatedNodes,
+		"allNodesUpdated", allUpdated)
+
+	return nil
+}
+
+// getNodesCoveredByDeployment determines which nodes were covered by a deployment
+// based on the AnsibleLimit field
+func getNodesCoveredByDeployment(
+	deployment *dataplanev1.OpenStackDataPlaneDeployment,
+	nodeset *dataplanev1.OpenStackDataPlaneNodeSet,
+) []string {
+	if deployment == nil || nodeset == nil {
+		return []string{}
+	}
+
+	allNodes := getAllNodeNames(nodeset)
+
+	// Check AnsibleLimit
+	ansibleLimit := deployment.Spec.AnsibleLimit
+	if ansibleLimit == "" || ansibleLimit == "*" {
+		// All nodes covered
+		return allNodes
+	}
+
+	// Parse AnsibleLimit (comma-separated list)
+	limitParts := strings.Split(ansibleLimit, ",")
+
+	coveredNodes := make([]string, 0, len(allNodes))
+	for _, node := range allNodes {
+		for _, part := range limitParts {
+			part = strings.TrimSpace(part)
+
+			// Exact match
+			if part == node {
+				coveredNodes = append(coveredNodes, node)
+				break
+			}
+
+			// Wildcard matching
+			if strings.HasSuffix(part, "*") {
+				prefix := strings.TrimSuffix(part, "*")
+				if strings.HasPrefix(node, prefix) {
+					coveredNodes = append(coveredNodes, node)
+					break
+				}
+			}
+		}
+	}
+
+	return coveredNodes
+}
+
+// getAllNodeNames returns a list of all node names in the nodeset
+func getAllNodeNames(nodeset *dataplanev1.OpenStackDataPlaneNodeSet) []string {
+	if nodeset == nil {
+		return []string{}
+	}
+	nodes := make([]string, 0, len(nodeset.Spec.Nodes))
+	for nodeName := range nodeset.Spec.Nodes {
+		nodes = append(nodes, nodeName)
+	}
+	return nodes
 }

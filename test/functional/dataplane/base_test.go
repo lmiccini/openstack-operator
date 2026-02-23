@@ -757,3 +757,42 @@ func findEnvVar(envVars []corev1.EnvVar) corev1.EnvVar {
 	}
 	return corev1.EnvVar{}
 }
+
+func GetSecretTrackingConfigMap(name types.NamespacedName) *corev1.ConfigMap {
+	cm := &corev1.ConfigMap{}
+	Eventually(func(g Gomega) {
+		g.Expect(k8sClient.Get(ctx, name, cm)).Should(Succeed())
+	}, timeout, interval).Should(Succeed())
+	return cm
+}
+
+func CredentialTestNodeSetSpec(nodeSetName string, serviceName string) map[string]interface{} {
+	return map[string]interface{}{
+		"preProvisioned": true,
+		"services": []string{
+			serviceName,
+		},
+		"nodeTemplate": map[string]interface{}{
+			"ansibleSSHPrivateKeySecret": "dataplane-ansible-ssh-private-key-secret",
+			"networks": []infrav1.IPSetNetwork{
+				{Name: "ctlplane", SubnetName: "subnet1"},
+			},
+			"ansible": map[string]interface{}{
+				"ansibleUser": "cloud-user",
+			},
+		},
+		"nodes": map[string]interface{}{
+			fmt.Sprintf("%s-node-1", nodeSetName): map[string]interface{}{
+				"hostName": fmt.Sprintf("%s-node-1", nodeSetName),
+				"networks": []infrav1.IPSetNetwork{
+					{Name: "ctlplane", SubnetName: "subnet1"},
+				},
+				"ansible": map[string]interface{}{
+					"ansibleHost": "192.168.122.100",
+				},
+			},
+		},
+		"tlsEnabled":    true,
+		"secretMaxSize": 1048576,
+	}
+}

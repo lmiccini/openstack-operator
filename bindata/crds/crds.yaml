@@ -21193,6 +21193,33 @@ spec:
                   generation, then the controller has not processed the latest changes.
                 format: int64
                 type: integer
+              secretDeployment:
+                description: |-
+                  SecretDeployment tracks secret deployment progress across nodeset nodes
+                  Details are stored in a ConfigMap to avoid bloating the CR status
+                properties:
+                  allNodesUpdated:
+                    description: AllNodesUpdated indicates all nodes have been deployed
+                      with current secret versions
+                    type: boolean
+                  deployedSecretHash:
+                    description: |-
+                      DeployedSecretHash is a composite hash of all tracked secrets at the time of
+                      the last successful deployment. Drift is detected when this differs from the
+                      current cluster secret state.
+                    type: string
+                  lastUpdateTime:
+                    description: LastUpdateTime is when this status was last updated
+                    format: date-time
+                    type: string
+                  totalNodes:
+                    description: TotalNodes is the total number of nodes in the nodeset
+                    type: integer
+                  updatedNodes:
+                    description: UpdatedNodes is count of nodes deployed with current
+                      secret versions
+                    type: integer
+                type: object
               secretHashes:
                 additionalProperties:
                   type: string

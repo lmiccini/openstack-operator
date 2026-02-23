@@ -163,6 +163,43 @@ type OpenStackDataPlaneNodeSetStatus struct {
 
 	//DeployedBmhHash - Hash of BMHs deployed
 	DeployedBmhHash string `json:"deployedBmhHash,omitempty"`
+
+	// SecretDeployment tracks secret deployment progress across nodeset nodes
+	// Details are stored in a ConfigMap to avoid bloating the CR status
+	SecretDeployment *SecretDeploymentStatus `json:"secretDeployment,omitempty"`
+}
+
+// GetSecretTrackingConfigMapName returns the name of the ConfigMap that stores
+// per-node secret deployment tracking data for a given nodeset.
+func GetSecretTrackingConfigMapName(nodesetName string) string {
+	return fmt.Sprintf("%s-secret-tracking", nodesetName)
+}
+
+// SecretDeploymentStatus tracks secret deployment progress across nodeset nodes.
+// Summary fields are stored here; the detailed per-node deployed list is in a
+// ConfigMap (<nodeset-name>-secret-tracking) to avoid bloating CR status for large nodesets.
+type SecretDeploymentStatus struct {
+	// +optional
+	// AllNodesUpdated indicates all nodes have been deployed with current secret versions
+	AllNodesUpdated bool `json:"allNodesUpdated,omitempty"`
+
+	// +optional
+	// TotalNodes is the total number of nodes in the nodeset
+	TotalNodes int `json:"totalNodes,omitempty"`
+
+	// +optional
+	// UpdatedNodes is count of nodes deployed with current secret versions
+	UpdatedNodes int `json:"updatedNodes,omitempty"`
+
+	// +optional
+	// DeployedSecretHash is a composite hash of all tracked secrets at the time of
+	// the last successful deployment. Drift is detected when this differs from the
+	// current cluster secret state.
+	DeployedSecretHash string `json:"deployedSecretHash,omitempty"`
+
+	// +optional
+	// LastUpdateTime is when this status was last updated
+	LastUpdateTime *metav1.Time `json:"lastUpdateTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -181,6 +218,14 @@ func init() {
 // IsReady - returns true if the DataPlane is ready
 func (instance OpenStackDataPlaneNodeSet) IsReady() bool {
 	return instance.Status.Conditions.IsTrue(condition.ReadyCondition)
+}
+
+// AreAllNodesUpdated returns true if all nodes have been deployed with current
+// secret versions. Returns false if tracking is not initialized or any nodes
+// have pending updates (fail-safe default).
+func (instance OpenStackDataPlaneNodeSet) AreAllNodesUpdated() bool {
+	return instance.Status.SecretDeployment != nil &&
+		instance.Status.SecretDeployment.AllNodesUpdated
 }
 
 // InitConditions - Initializes Status Conditons
