@@ -1568,3 +1568,214 @@ func TestSecretRotationBetweenDeploymentAndReconciliation(t *testing.T) {
 
 	// This validates hash-based approach correctly handles the race condition
 }
+
+// TestRotationWithTwoSeparateLimitedDeployments simulates the exact scenario:
+// 1. Initial deployment covers all nodes with V1
+// 2. Secret rotates to V2 in cluster
+// 3. First deployment with AnsibleLimit targets compute-0, deploys V2
+// 4. Second deployment with AnsibleLimit targets compute-1, deploys V2
+// 5. Both nodes should accumulate in nodesWithCurrent, no duplicates in previous
+func TestRotationWithTwoSeparateLimitedDeployments(t *testing.T) {
+	// STEP 1: Initial state - all nodes have V1
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-cell1-compute-config": {
+				CurrentHash:             "hash-user5-v1",
+				CurrentResourceVersion:  "15940100",
+				CurrentGeneration:       0,
+				ExpectedHash:            "hash-user5-v1",
+				ExpectedResourceVersion: "15940100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"edpm-compute-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+			"edpm-compute-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+		},
+	}
+
+	// Verify initial state is clean
+	summary := computeDeploymentSummary(trackingData, 2, "test-cm")
+	if !summary.AllNodesUpdated {
+		t.Error("Initial state: AllNodesUpdated should be true")
+	}
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("Initial state: UpdatedNodes = %d, want 2", summary.UpdatedNodes)
+	}
+
+	// STEP 2: Secret rotates to V2 (user switched from user5 to user6)
+	// Cluster now has hash-user6-v2
+	// Drift detection updates Expected
+	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
+	secretInfo.ExpectedHash = "hash-user6-v2"
+	secretInfo.ExpectedResourceVersion = "15940207"
+	secretInfo.ExpectedGeneration = 0
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Verify drift is detected
+	summary = computeDeploymentSummary(trackingData, 2, "test-cm")
+	if summary.AllNodesUpdated {
+		t.Error("After rotation: AllNodesUpdated should be false (drift detected)")
+	}
+	if summary.UpdatedNodes != 0 {
+		t.Errorf("After rotation: UpdatedNodes = %d, want 0 (drift detected)", summary.UpdatedNodes)
+	}
+
+	// STEP 3: First deployment "edpm-deployment" completes - full deployment
+	// This triggers rotation detection because deployment hash != current hash
+	// But let's say this was the OLD deployment that ran before user switched
+	// Skip this for now, go straight to the limited deployments
+
+	// Actually, let me simulate what the logs showed:
+	// The "edpm-deployment" ran and rotated BACK from user6 to user5
+	// Then c0-limit and c1-limit ran with user6
+
+	// Simulating "edpm-deployment" processing (this seems to have rotated back?)
+	// Let's skip to the relevant scenario
+
+	// STEP 3: First limited deployment "edpm-deployment-c0-limit" completes
+	// Targets only edpm-compute-0, has V2 (user6)
+	deploymentHashV2 := "hash-user6-v2"
+	coveredNodesC0 := []string{"edpm-compute-0"}
+
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+
+	// Check if rotation (current hash != deployment hash)
+	if secretInfo.CurrentHash != deploymentHashV2 {
+		// ROTATION detected
+		secretInfo.PreviousHash = secretInfo.CurrentHash
+		secretInfo.PreviousResourceVersion = secretInfo.CurrentResourceVersion
+		secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
+		secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
+
+		secretInfo.CurrentHash = deploymentHashV2
+		secretInfo.CurrentResourceVersion = "15940207"
+		secretInfo.CurrentGeneration = 0
+		secretInfo.NodesWithCurrent = coveredNodesC0 // Only compute-0
+		secretInfo.LastChanged = time.Now()
+	}
+
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Verify state after first deployment
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+	if len(secretInfo.NodesWithCurrent) != 1 {
+		t.Errorf("After c0-limit: nodesWithCurrent count = %d, want 1", len(secretInfo.NodesWithCurrent))
+	}
+	if !slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-0") {
+		t.Error("After c0-limit: edpm-compute-0 should be in nodesWithCurrent")
+	}
+	if len(secretInfo.NodesWithPrevious) != 2 {
+		t.Errorf("After c0-limit: nodesWithPrevious count = %d, want 2", len(secretInfo.NodesWithPrevious))
+	}
+
+	// STEP 4: Second limited deployment "edpm-deployment-c1-limit" completes
+	// Targets only edpm-compute-1, has V2 (user6)
+	coveredNodesC1 := []string{"edpm-compute-1"}
+
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+
+	// This should be SAME version path (current hash == deployment hash)
+	if secretInfo.CurrentHash == deploymentHashV2 {
+		// SAME version - accumulate nodes
+		for _, node := range coveredNodesC1 {
+			if !slices.Contains(secretInfo.NodesWithCurrent, node) {
+				secretInfo.NodesWithCurrent = append(secretInfo.NodesWithCurrent, node)
+			}
+
+			// Remove from previous if it was there (node upgraded)
+			if secretInfo.PreviousHash != "" {
+				newPrevious := []string{}
+				for _, prevNode := range secretInfo.NodesWithPrevious {
+					if prevNode != node {
+						newPrevious = append(newPrevious, prevNode)
+					}
+				}
+				secretInfo.NodesWithPrevious = newPrevious
+			}
+		}
+
+		// Clear previous version metadata if all nodes now have current version
+		totalNodes := 2
+		if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
+			secretInfo.PreviousHash = ""
+			secretInfo.PreviousResourceVersion = ""
+			secretInfo.PreviousGeneration = 0
+			secretInfo.NodesWithPrevious = []string{}
+		}
+	} else {
+		t.Fatal("c1-limit should be SAME version path, but hash differs!")
+	}
+
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// VERIFY: Final state after both deployments
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+
+	// Both nodes should be in nodesWithCurrent
+	if len(secretInfo.NodesWithCurrent) != 2 {
+		t.Errorf("After c1-limit: nodesWithCurrent count = %d, want 2", len(secretInfo.NodesWithCurrent))
+	}
+	if !slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-0") {
+		t.Error("After c1-limit: edpm-compute-0 should be in nodesWithCurrent")
+	}
+	if !slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-1") {
+		t.Error("After c1-limit: edpm-compute-1 should be in nodesWithCurrent")
+	}
+
+	// No nodes should be in nodesWithPrevious
+	if len(secretInfo.NodesWithPrevious) != 0 {
+		t.Errorf("After c1-limit: nodesWithPrevious should be empty, got %v", secretInfo.NodesWithPrevious)
+	}
+
+	// PreviousHash should be cleared
+	if secretInfo.PreviousHash != "" {
+		t.Errorf("After c1-limit: previousHash should be cleared, got %s", secretInfo.PreviousHash)
+	}
+
+	// Verify no node is in BOTH lists
+	for _, node := range secretInfo.NodesWithCurrent {
+		if slices.Contains(secretInfo.NodesWithPrevious, node) {
+			t.Errorf("Node %s is in BOTH nodesWithCurrent and nodesWithPrevious!", node)
+		}
+	}
+
+	// Update node status
+	for _, nodeName := range []string{"edpm-compute-0", "edpm-compute-1"} {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{},
+			SecretsWithPrevious: []string{},
+		}
+
+		for secretName, sInfo := range trackingData.Secrets {
+			if slices.Contains(sInfo.NodesWithCurrent, nodeName) {
+				nodeStatus.SecretsWithCurrent = append(nodeStatus.SecretsWithCurrent, secretName)
+			} else if slices.Contains(sInfo.NodesWithPrevious, nodeName) {
+				nodeStatus.SecretsWithPrevious = append(nodeStatus.SecretsWithPrevious, secretName)
+				nodeStatus.AllSecretsUpdated = false
+			} else {
+				nodeStatus.AllSecretsUpdated = false
+			}
+		}
+
+		trackingData.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// Verify summary
+	summary = computeDeploymentSummary(trackingData, 2, "test-cm")
+	if !summary.AllNodesUpdated {
+		t.Error("Final: AllNodesUpdated should be true after both limited deployments complete")
+	}
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("Final: UpdatedNodes = %d, want 2", summary.UpdatedNodes)
+	}
+}

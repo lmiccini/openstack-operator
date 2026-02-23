@@ -621,7 +621,10 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 			// 1. Config or secrets changed (normal case)
 			// 2. Status is empty (first-time tracking)
 			// 3. ConfigMap is missing but status exists (recovery from deletion)
-			needsTracking := configHashChanged || secretsChanged || instance.Status.SecretDeployment == nil
+			// 4. Deployment covers some nodes (via AnsibleLimit) - needed for gradual rollouts
+			//    where multiple deployments have same hashes but target different nodes
+			hasAnsibleLimit := deployment.Spec.AnsibleLimit != "" && deployment.Spec.AnsibleLimit != "*"
+			needsTracking := configHashChanged || secretsChanged || instance.Status.SecretDeployment == nil || hasAnsibleLimit
 
 			// Check if ConfigMap exists when status exists (handle manual deletion)
 			if !needsTracking && instance.Status.SecretDeployment != nil {
