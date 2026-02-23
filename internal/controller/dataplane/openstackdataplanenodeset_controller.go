@@ -1138,23 +1138,23 @@ type SecretTrackingData struct {
 // SecretVersionInfo tracks a secret's current and previous versions across nodes
 type SecretVersionInfo struct {
 	// Current: what's deployed on nodes (from last deployment)
-	CurrentHash            string    `json:"currentHash"`
-	CurrentResourceVersion string    `json:"currentResourceVersion"`
-	CurrentGeneration      int64     `json:"currentGeneration"`
-	NodesWithCurrent       []string  `json:"nodesWithCurrent"`
+	CurrentHash            string   `json:"currentHash"`
+	CurrentResourceVersion string   `json:"currentResourceVersion"`
+	CurrentGeneration      int64    `json:"currentGeneration"`
+	NodesWithCurrent       []string `json:"nodesWithCurrent"`
 
 	// Expected: what's in K8s cluster right now (fetched live during drift detection)
-	ExpectedHash            string    `json:"expectedHash,omitempty"`
-	ExpectedResourceVersion string    `json:"expectedResourceVersion,omitempty"`
-	ExpectedGeneration      int64     `json:"expectedGeneration,omitempty"`
+	ExpectedHash            string `json:"expectedHash,omitempty"`
+	ExpectedResourceVersion string `json:"expectedResourceVersion,omitempty"`
+	ExpectedGeneration      int64  `json:"expectedGeneration,omitempty"`
 
 	// Previous: for rotation tracking (old version during rollout)
-	PreviousHash            string    `json:"previousHash,omitempty"`
-	PreviousResourceVersion string    `json:"previousResourceVersion,omitempty"`
-	PreviousGeneration      int64     `json:"previousGeneration,omitempty"`
-	NodesWithPrevious       []string  `json:"nodesWithPrevious,omitempty"`
+	PreviousHash            string   `json:"previousHash,omitempty"`
+	PreviousResourceVersion string   `json:"previousResourceVersion,omitempty"`
+	PreviousGeneration      int64    `json:"previousGeneration,omitempty"`
+	NodesWithPrevious       []string `json:"nodesWithPrevious,omitempty"`
 
-	LastChanged            time.Time `json:"lastChanged"`
+	LastChanged time.Time `json:"lastChanged"`
 }
 
 // NodeSecretStatus tracks which secrets a node has (current version)
@@ -1352,11 +1352,10 @@ func computeDeploymentSummary(
 	configMapName string,
 ) *dataplanev1.SecretDeploymentStatus {
 	// Check if any secret has drift (Current != Expected)
-	// Don't use hash - only ResourceVersion/Generation are deterministic
+	// Use hash comparison - secret.Hash() from lib-common is deterministic
 	hasDrift := false
 	for _, secretInfo := range data.Secrets {
-		if secretInfo.CurrentResourceVersion != secretInfo.ExpectedResourceVersion ||
-			secretInfo.CurrentGeneration != secretInfo.ExpectedGeneration {
+		if secretInfo.CurrentHash != secretInfo.ExpectedHash {
 			hasDrift = true
 			break
 		}
@@ -1426,29 +1425,83 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 	}
 
 	// Process each secret in the deployment
-	// When a deployment runs, we:
-	// 1. Fetch the secret from cluster (this is what was deployed)
-	// 2. Update Current = Expected = this secret (reset to what's deployed)
-	// 3. Update NodesWithCurrent with covered nodes
+	// Strategy:
+	// 1. Fetch cluster secret to get ResourceVersion/Generation (for logging/debugging metadata)
+	// 2. Use hash from deployment.Status.SecretHashes for rotation detection
+	//    - Hash is from secret.Hash() (lib-common) - deterministic and content-based
+	//    - Captured by deployment controller when deployment completed
+	//    - Represents what was actually deployed, not cluster state NOW
+	// 3. This avoids timing issues where cluster secret changes between deployment completion and reconciliation
+	// 4. Drift detection separately compares cluster state vs tracking using hash comparison
+	// 5. Both rotation and drift detection use hash-based comparison for consistency
+
+	// Defensive validation: check deployment has secret hashes
+	if len(deployment.Status.SecretHashes) == 0 {
+		Log.Info("Deployment has no secret hashes in status, skipping tracking update",
+			"deployment", deployment.Name,
+			"namespace", deployment.Namespace,
+			"deploymentReady", isDeploymentReady)
+		return nil
+	}
+
 	for secretName, secretHash := range deployment.Status.SecretHashes {
-		// Fetch the secret from cluster
-		secret := &corev1.Secret{}
+		// Defensive validation: check hash is not empty
+		if secretHash == "" {
+			Log.Error(nil, "Empty secret hash in deployment status, skipping this secret",
+				"secret", secretName,
+				"deployment", deployment.Name,
+				"namespace", deployment.Namespace)
+			continue
+		}
+
+		// Fetch cluster secret for ResourceVersion/Generation metadata (logging/debugging)
+		// IMPORTANT: We use the hash from deployment.Status for rotation detection,
+		// NOT the cluster secret's current state. This prevents timing issues where
+		// the secret rotates between deployment completion and this reconciliation.
+		// We verify the hashes match (informational log if they differ).
+		clusterSecret := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{
 			Name:      secretName,
 			Namespace: instance.Namespace,
-		}, secret)
+		}, clusterSecret)
 		if err != nil {
 			if k8s_errors.IsNotFound(err) {
+				// Secret deleted between deployment completion and now - skip it
+				// Drift detection will handle this case
 				Log.Info("Secret in deployment not found in cluster, skipping tracking",
-					"secret", secretName)
+					"secret", secretName,
+					"deployment", deployment.Name)
 				continue
 			}
-			Log.Error(err, "Failed to fetch secret for tracking", "secret", secretName)
+			// API error - return immediately to trigger reconciliation retry
+			// We don't save partial tracking state to avoid inconsistency
+			// Next reconciliation will retry with the same starting state
+			Log.Error(err, "Failed to fetch secret for tracking, will retry on next reconciliation",
+				"secret", secretName,
+				"deployment", deployment.Name,
+				"namespace", instance.Namespace)
 			return err
 		}
 
-		resourceVersion := secret.ResourceVersion
-		generation := secret.Generation
+		resourceVersion := clusterSecret.ResourceVersion
+		generation := clusterSecret.Generation
+
+		// Defensive verification: check if cluster secret hash matches deployment hash
+		// This is informational - if they differ, it means secret rotated after deployment
+		clusterSecretHash, hashErr := secret.Hash(clusterSecret)
+		if hashErr != nil {
+			Log.Error(hashErr, "Failed to compute cluster secret hash for verification",
+				"secret", secretName,
+				"deployment", deployment.Name)
+			// Non-fatal - continue with deployment hash
+		} else if clusterSecretHash != secretHash {
+			Log.Info("Cluster secret hash differs from deployment hash (expected if secret rotated after deployment)",
+				"secret", secretName,
+				"deployment", deployment.Name,
+				"deploymentHash", secretHash,
+				"clusterHash", clusterSecretHash,
+				"clusterResourceVersion", resourceVersion)
+		}
 
 		secretInfo, exists := trackingData.Secrets[secretName]
 
@@ -1459,35 +1512,35 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				nodesWithCurrent = coveredNodes
 			}
 
-			// Set both Current and Expected to what's in cluster (what we just deployed)
 			secretInfo = SecretVersionInfo{
 				CurrentHash:             secretHash,
 				CurrentResourceVersion:  resourceVersion,
 				CurrentGeneration:       generation,
-				ExpectedHash:            secretHash,
-				ExpectedResourceVersion: resourceVersion,
-				ExpectedGeneration:      generation,
 				NodesWithCurrent:        nodesWithCurrent,
 				LastChanged:             time.Now(),
 			}
 
 			Log.Info("New secret detected in deployment",
 				"secret", secretName,
+				"deployment", deployment.Name,
+				"namespace", deployment.Namespace,
 				"hash", secretHash,
 				"resourceVersion", resourceVersion,
 				"generation", generation,
 				"deploymentReady", isDeploymentReady,
 				"nodesWithCurrent", len(nodesWithCurrent))
 
-		} else if secretInfo.ExpectedResourceVersion != resourceVersion ||
-			secretInfo.ExpectedGeneration != generation {
-			// SECRET ROTATION: ResourceVersion/Generation changed (cluster secret changed)
-			Log.Info("Secret rotation detected",
+		} else if secretInfo.CurrentHash != secretHash {
+			// SECRET ROTATION: Deployment hash different from currently tracked
+			// Use hash comparison (from deployment.Status) instead of ResourceVersion comparison
+			// This avoids timing issues where cluster secret changes between deployment start/finish
+			Log.Info("Secret rotation detected in deployment",
 				"secret", secretName,
+				"deployment", deployment.Name,
+				"namespace", deployment.Namespace,
 				"oldCurrentHash", secretInfo.CurrentHash,
-				"oldExpectedHash", secretInfo.ExpectedHash,
 				"newHash", secretHash,
-				"oldResourceVersion", secretInfo.ExpectedResourceVersion,
+				"oldResourceVersion", secretInfo.CurrentResourceVersion,
 				"newResourceVersion", resourceVersion,
 				"deploymentReady", isDeploymentReady)
 
@@ -1497,18 +1550,15 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 			secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
 			secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
 
-			// Update Current and Expected to new version (from cluster)
+			// Update Current to new version from deployment
+			// Use hash from deployment.Status (what deployment saw)
+			// Use ResourceVersion/Generation from cluster (for drift detection metadata)
 			secretInfo.CurrentHash = secretHash
 			secretInfo.CurrentResourceVersion = resourceVersion
 			secretInfo.CurrentGeneration = generation
-			secretInfo.ExpectedHash = secretHash
-			secretInfo.ExpectedResourceVersion = resourceVersion
-			secretInfo.ExpectedGeneration = generation
 			secretInfo.LastChanged = time.Now()
 
 			// Update NodesWithCurrent if deployment is ready
-			// Trust that the deployment has whatever version it says it has
-			// Drift detection will determine if it's stale
 			if isDeploymentReady {
 				secretInfo.NodesWithCurrent = coveredNodes
 
@@ -1516,7 +1566,10 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
 					Log.Info("All nodes updated with new secret version after rotation, clearing previous",
 						"secret", secretName,
-						"previousHash", secretInfo.PreviousHash)
+						"deployment", deployment.Name,
+						"namespace", deployment.Namespace,
+						"previousHash", secretInfo.PreviousHash,
+						"totalNodes", totalNodes)
 					secretInfo.PreviousHash = ""
 					secretInfo.PreviousResourceVersion = ""
 					secretInfo.PreviousGeneration = 0
@@ -1529,10 +1582,9 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 
 		} else {
 			// SAME version - accumulate nodes across deployments
-			// Update Expected to cluster value (should match Current if no drift)
-			secretInfo.ExpectedHash = secretHash
-			secretInfo.ExpectedResourceVersion = resourceVersion
-			secretInfo.ExpectedGeneration = generation
+			// Current hash matches deployment hash - just accumulate nodes
+			// Note: We don't update ResourceVersion/Generation here to keep metadata
+			// consistent with the hash. Drift detection will update Expected metadata.
 
 			if isDeploymentReady {
 				// Add newly covered nodes
@@ -1557,7 +1609,10 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 				if len(secretInfo.NodesWithCurrent) == totalNodes && secretInfo.PreviousHash != "" {
 					Log.Info("All nodes updated with new secret version, clearing previous",
 						"secret", secretName,
-						"previousHash", secretInfo.PreviousHash)
+						"deployment", deployment.Name,
+						"namespace", deployment.Namespace,
+						"previousHash", secretInfo.PreviousHash,
+						"totalNodes", totalNodes)
 					secretInfo.PreviousHash = ""
 					secretInfo.PreviousResourceVersion = ""
 					secretInfo.PreviousGeneration = 0
@@ -1638,24 +1693,34 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 	// Fetch from cluster (Expected) and compare with Current (what's on nodes)
 	for secretName, secretInfo := range trackingData.Secrets {
 		// Fetch current secret from cluster
-		secret := &corev1.Secret{}
+		clusterSecret := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{
 			Name:      secretName,
 			Namespace: instance.Namespace,
-		}, secret)
+		}, clusterSecret)
 
 		var expectedResourceVersion string
 		var expectedGeneration int64
+
+		var expectedHash string
 
 		if err != nil {
 			if k8s_errors.IsNotFound(err) {
 				// Secret deleted from cluster
 				Log.Info("Secret drift detected: secret deleted from cluster",
 					"secret", secretName,
+					"currentHash", secretInfo.CurrentHash,
 					"currentResourceVersion", secretInfo.CurrentResourceVersion)
+				expectedHash = ""
 				expectedResourceVersion = ""
 				expectedGeneration = 0
 				driftDetected = true
+
+				// Update Expected in tracking to reflect deletion
+				secretInfo.ExpectedHash = expectedHash
+				secretInfo.ExpectedResourceVersion = expectedResourceVersion
+				secretInfo.ExpectedGeneration = expectedGeneration
+				trackingData.Secrets[secretName] = secretInfo
 			} else {
 				// Error fetching secret - fail-safe: assume drift
 				Log.Error(err, "Failed to fetch secret for drift detection, assuming drift (fail-safe)",
@@ -1663,27 +1728,37 @@ func (r *OpenStackDataPlaneNodeSetReconciler) detectSecretDrift(
 				return true, err
 			}
 		} else {
-			// Get metadata - no hash needed, use ResourceVersion/Generation
-			expectedResourceVersion = secret.ResourceVersion
-			expectedGeneration = secret.Generation
-		}
+			// Compute hash of cluster secret for comparison
+			// Use secret.Hash() from lib-common (deterministic, unlike util.ObjectHash)
+			expectedHash, err := secret.Hash(clusterSecret)
+			if err != nil {
+				// Can't compute hash - fail-safe: assume drift
+				Log.Error(err, "Failed to compute secret hash for drift detection, assuming drift (fail-safe)",
+					"secret", secretName)
+				return true, err
+			}
 
-		// Update Expected in tracking (for next comparison)
-		secretInfo.ExpectedResourceVersion = expectedResourceVersion
-		secretInfo.ExpectedGeneration = expectedGeneration
-		trackingData.Secrets[secretName] = secretInfo
+			// Get metadata for logging/debugging
+			expectedResourceVersion = clusterSecret.ResourceVersion
+			expectedGeneration = clusterSecret.Generation
 
-		// Compare Expected (cluster) vs Current (deployed) using deterministic K8s metadata
-		// Don't use hash - util.ObjectHash is non-deterministic due to map iteration order
-		if expectedResourceVersion != secretInfo.CurrentResourceVersion ||
-			expectedGeneration != secretInfo.CurrentGeneration {
-			Log.Info("Secret drift detected: cluster secret differs from deployed version",
-				"secret", secretName,
-				"currentResourceVersion", secretInfo.CurrentResourceVersion,
-				"expectedResourceVersion", expectedResourceVersion,
-				"currentGeneration", secretInfo.CurrentGeneration,
-				"expectedGeneration", expectedGeneration)
-			driftDetected = true
+			// Update Expected in tracking
+			secretInfo.ExpectedHash = expectedHash
+			secretInfo.ExpectedResourceVersion = expectedResourceVersion
+			secretInfo.ExpectedGeneration = expectedGeneration
+			trackingData.Secrets[secretName] = secretInfo
+
+			// Compare Expected (cluster) vs Current (deployed) using hash
+			// Hash represents actual secret content, avoiding ResourceVersion timing issues
+			if expectedHash != secretInfo.CurrentHash {
+				Log.Info("Secret drift detected: cluster secret differs from deployed version",
+					"secret", secretName,
+					"currentHash", secretInfo.CurrentHash,
+					"expectedHash", expectedHash,
+					"currentResourceVersion", secretInfo.CurrentResourceVersion,
+					"expectedResourceVersion", expectedResourceVersion)
+				driftDetected = true
+			}
 		}
 	}
 
