@@ -704,13 +704,48 @@ func checkDeployment(ctx context.Context, helper *helper.Helper,
 	// Always run drift detection - even if tracking was just updated, secrets may have
 	// changed during the deployment (e.g., cert-manager rotating certs), and we should
 	// detect this as drift requiring a new deployment.
+	//
+	// IMPORTANT: We reload trackingData here to check current cluster state.
+	// However, Kubernetes client caching can cause stale reads if deployments were
+	// just processed above. To work around this, we fetch the ConfigMap directly
+	// with a fresh read to bypass the cache.
 	if instance.Status.SecretDeployment != nil {
-		// Load current tracking data
-		trackingData, err := r.getSecretTrackingData(ctx, helper, instance)
+		// Fetch ConfigMap directly to bypass client cache
+		configMapName := getSecretTrackingConfigMapName(instance.Name)
+		cm := &corev1.ConfigMap{}
+		err := helper.GetClient().Get(ctx, types.NamespacedName{
+			Name:      configMapName,
+			Namespace: instance.Namespace,
+		}, cm)
+
+		var trackingData *SecretTrackingData
 		if err != nil {
-			helper.GetLogger().Error(err, "Failed to load tracking data for drift detection")
-			// Don't fail reconciliation, but log the error
+			if k8s_errors.IsNotFound(err) {
+				helper.GetLogger().Info("Tracking ConfigMap not found for drift detection, skipping")
+				trackingData = nil
+			} else {
+				helper.GetLogger().Error(err, "Failed to load tracking ConfigMap for drift detection")
+				trackingData = nil
+			}
 		} else {
+			// Parse tracking data from ConfigMap
+			trackingJSON := cm.Data["tracking.json"]
+			if trackingJSON == "" {
+				helper.GetLogger().Info("Empty tracking data in ConfigMap for drift detection")
+				trackingData = &SecretTrackingData{
+					Secrets:    make(map[string]SecretVersionInfo),
+					NodeStatus: make(map[string]NodeSecretStatus),
+				}
+			} else {
+				trackingData = &SecretTrackingData{}
+				if unmarshalErr := json.Unmarshal([]byte(trackingJSON), trackingData); unmarshalErr != nil {
+					helper.GetLogger().Error(unmarshalErr, "Failed to unmarshal tracking data for drift detection")
+					trackingData = nil
+				}
+			}
+		}
+
+		if trackingData != nil {
 			// Check for drift (also updates Expected fields in tracking)
 			driftDetected, err := r.detectSecretDrift(ctx, instance, trackingData)
 			if err != nil {
