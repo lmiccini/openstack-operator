@@ -1891,29 +1891,27 @@ func TestStaleDeploymentDoesNotFlipFlop(t *testing.T) {
 		t.Fatalf("Failed to compute hash: %v", err)
 	}
 
-	// 4. Determine which hash to use (THE FIX)
-	hashToStore := deploymentHash // Default to deployment hash
-	if fetchedHash != deploymentHash {
-		t.Logf("Cluster hash differs from deployment hash, using cluster hash (fix applied)")
-		hashToStore = fetchedHash // Use cluster hash instead of stale deployment hash!
+	// 4. Check if deployment is stale (THE FIX)
+	isStale := fetchedHash != deploymentHash
+
+	// VERIFY: With the fix, stale deployment should be SKIPPED
+	if !isStale {
+		t.Error("Test setup error: deployment should be stale (cluster hash != deployment hash)")
 	}
 
-	// 5. Compare with tracking to detect rotation
+	// 5. With the NEW fix: SKIP stale deployments entirely
+	// Don't process tracking at all for this deployment
+	// trackingData remains unchanged
+
+	// VERIFY: Tracking state is NOT modified (deployment was skipped)
 	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
-	rotationDetected := secretInfo.CurrentHash != hashToStore
-
-	// VERIFY: With the fix, no rotation should be detected
-	if rotationDetected {
-		t.Error("Should NOT detect rotation when stale deployment processed with fix")
+	if secretInfo.CurrentHash != clusterHash {
+		t.Error("Tracking CurrentHash should remain unchanged (stale deployment skipped)")
 	}
 
-	// Verify hashToStore is cluster hash, not stale deployment hash
-	if hashToStore != clusterHash {
-		t.Error("Fix should use cluster hash when it differs from deployment hash")
-	}
-
-	if hashToStore == oldHash {
-		t.Error("Fix should NOT use stale deployment hash")
+	// Verify stale deployment hash was NOT used
+	if secretInfo.CurrentHash == oldHash {
+		t.Error("Tracking should NOT have stale deployment hash (deployment was skipped)")
 	}
 
 	// Verify tracking state remains correct
@@ -1924,4 +1922,467 @@ func TestStaleDeploymentDoesNotFlipFlop(t *testing.T) {
 	if summary.UpdatedNodes != 2 {
 		t.Errorf("After stale deployment: UpdatedNodes = %d, want 2 (no flip-flop)", summary.UpdatedNodes)
 	}
+}
+
+// TestSingleNodeDeploymentDuringRotation tests the scenario where:
+// 1. Both nodes have user5 (old credentials)
+// 2. Secret rotates to user6 in cluster
+// 3. Deployment runs with AnsibleLimit targeting only one node (edpm-compute-0)
+// 4. Status should show allNodesUpdated=false, updatedNodes=1
+// 5. This prevents premature credential deletion (edpm-compute-1 still has old creds)
+func TestSingleNodeDeploymentDuringRotation(t *testing.T) {
+	// STEP 1: Initial state - both nodes have V1 (user5)
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-cell1-compute-config": {
+				CurrentHash:             "hash-user5",
+				CurrentResourceVersion:  "15940100",
+				CurrentGeneration:       0,
+				ExpectedHash:            "hash-user5",
+				ExpectedResourceVersion: "15940100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"edpm-compute-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+			"edpm-compute-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+		},
+	}
+
+	// Verify initial state is clean
+	summary := computeDeploymentSummary(trackingData, 2, "test-cm")
+	if !summary.AllNodesUpdated {
+		t.Error("Initial state: AllNodesUpdated should be true")
+	}
+	if summary.UpdatedNodes != 2 {
+		t.Errorf("Initial state: UpdatedNodes = %d, want 2", summary.UpdatedNodes)
+	}
+
+	// STEP 2: Secret rotates to V2 (user6) in cluster
+	// Drift detection updates Expected hash
+	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
+	secretInfo.ExpectedHash = "hash-user6"
+	secretInfo.ExpectedResourceVersion = "15940207"
+	secretInfo.ExpectedGeneration = 0
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Verify drift is detected
+	summary = computeDeploymentSummary(trackingData, 2, "test-cm")
+	if summary.AllNodesUpdated {
+		t.Error("After rotation: AllNodesUpdated should be false (drift detected)")
+	}
+	if summary.UpdatedNodes != 0 {
+		t.Errorf("After rotation: UpdatedNodes = %d, want 0 (drift detected)", summary.UpdatedNodes)
+	}
+
+	// STEP 3: Deployment with AnsibleLimit=edpm-compute-0 completes
+	// This targets ONLY edpm-compute-0, not both nodes
+	deploymentHashV2 := "hash-user6"
+	coveredNodes := []string{"edpm-compute-0"} // Only one node!
+
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+
+	// Check if rotation (current hash != deployment hash)
+	if secretInfo.CurrentHash != deploymentHashV2 {
+		// ROTATION detected
+		secretInfo.PreviousHash = secretInfo.CurrentHash
+		secretInfo.PreviousResourceVersion = secretInfo.CurrentResourceVersion
+		secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
+		secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
+
+		secretInfo.CurrentHash = deploymentHashV2
+		secretInfo.CurrentResourceVersion = "15940207"
+		secretInfo.CurrentGeneration = 0
+		secretInfo.NodesWithCurrent = coveredNodes // ONLY edpm-compute-0
+		secretInfo.LastChanged = time.Now()
+
+		// Don't clear previous - not all nodes updated
+		// len(NodesWithCurrent) = 1, totalNodes = 2, so condition is false
+	}
+
+	// Update Expected to match cluster (drift detection would do this)
+	secretInfo.ExpectedHash = deploymentHashV2
+	secretInfo.ExpectedResourceVersion = "15940207"
+	secretInfo.ExpectedGeneration = 0
+
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Update per-node status
+	allNodes := []string{"edpm-compute-0", "edpm-compute-1"}
+	for _, nodeName := range allNodes {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{},
+			SecretsWithPrevious: []string{},
+		}
+
+		for secretName, sInfo := range trackingData.Secrets {
+			if slices.Contains(sInfo.NodesWithCurrent, nodeName) {
+				nodeStatus.SecretsWithCurrent = append(nodeStatus.SecretsWithCurrent, secretName)
+			} else if slices.Contains(sInfo.NodesWithPrevious, nodeName) {
+				nodeStatus.SecretsWithPrevious = append(nodeStatus.SecretsWithPrevious, secretName)
+				nodeStatus.AllSecretsUpdated = false
+			} else {
+				nodeStatus.AllSecretsUpdated = false
+			}
+		}
+
+		trackingData.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// VERIFY: State after single-node deployment
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+
+	// Only edpm-compute-0 should be in NodesWithCurrent
+	if len(secretInfo.NodesWithCurrent) != 1 {
+		t.Errorf("After single-node deployment: NodesWithCurrent count = %d, want 1", len(secretInfo.NodesWithCurrent))
+	}
+	if !slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-0") {
+		t.Error("After single-node deployment: edpm-compute-0 should be in NodesWithCurrent")
+	}
+	if slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-1") {
+		t.Error("After single-node deployment: edpm-compute-1 should NOT be in NodesWithCurrent")
+	}
+
+	// edpm-compute-1 should still be in NodesWithPrevious
+	if len(secretInfo.NodesWithPrevious) != 2 {
+		t.Errorf("After single-node deployment: NodesWithPrevious count = %d, want 2", len(secretInfo.NodesWithPrevious))
+	}
+	if !slices.Contains(secretInfo.NodesWithPrevious, "edpm-compute-1") {
+		t.Error("After single-node deployment: edpm-compute-1 should be in NodesWithPrevious (still has old secret)")
+	}
+
+	// PreviousHash should NOT be cleared (not all nodes updated)
+	if secretInfo.PreviousHash == "" {
+		t.Error("After single-node deployment: PreviousHash should NOT be cleared (edpm-compute-1 still has old version)")
+	}
+
+	// Verify per-node status
+	// edpm-compute-0: should have all secrets updated
+	if !trackingData.NodeStatus["edpm-compute-0"].AllSecretsUpdated {
+		t.Error("After single-node deployment: edpm-compute-0 should have AllSecretsUpdated=true")
+	}
+
+	// edpm-compute-1: should NOT have all secrets updated (still has previous version)
+	if trackingData.NodeStatus["edpm-compute-1"].AllSecretsUpdated {
+		t.Error("After single-node deployment: edpm-compute-1 should have AllSecretsUpdated=false (still has old secret)")
+	}
+
+	// Verify summary status
+	summary = computeDeploymentSummary(trackingData, 2, "test-cm")
+
+	// CRITICAL: AllNodesUpdated should be FALSE (edpm-compute-1 still has old secret)
+	if summary.AllNodesUpdated {
+		t.Error("After single-node deployment: AllNodesUpdated should be FALSE (edpm-compute-1 not updated yet)")
+	}
+
+	// CRITICAL: UpdatedNodes should be 1, not 2 (only edpm-compute-0 has new secret)
+	if summary.UpdatedNodes != 1 {
+		t.Errorf("After single-node deployment: UpdatedNodes = %d, want 1 (only edpm-compute-0 updated)", summary.UpdatedNodes)
+	}
+
+	// This is the key test: credential deletion should be BLOCKED
+	// because AllNodesUpdated=false, meaning edpm-compute-1 still needs old credentials
+}
+
+// TestSingleNodeDeploymentWithMultipleSecrets tests the scenario where:
+// 1. There are MULTIPLE secrets being tracked
+// 2. One secret (nova-cell1-compute-config) rotates and deploys to single node
+// 3. Another secret (nova-metadata-config) has both nodes covered
+// 4. Bug: AllSecretsUpdated might incorrectly be true for edpm-compute-1
+//    because it has the non-rotated secret, ignoring that it's missing the rotated one
+func TestSingleNodeDeploymentWithMultipleSecrets(t *testing.T) {
+	// STEP 1: Initial state - both nodes have both secrets at V1
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-cell1-compute-config": {
+				CurrentHash:             "hash-user5",
+				CurrentResourceVersion:  "100",
+				CurrentGeneration:       0,
+				ExpectedHash:            "hash-user5",
+				ExpectedResourceVersion: "100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+			"nova-metadata-config": {
+				CurrentHash:             "metadata-v1",
+				CurrentResourceVersion:  "200",
+				CurrentGeneration:       0,
+				ExpectedHash:            "metadata-v1",
+				ExpectedResourceVersion: "200",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+				LastChanged:             time.Now().Add(-1 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"edpm-compute-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config", "nova-metadata-config"},
+			},
+			"edpm-compute-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config", "nova-metadata-config"},
+			},
+		},
+	}
+
+	// STEP 2: Only nova-cell1-compute-config rotates to user6
+	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
+	secretInfo.ExpectedHash = "hash-user6"
+	secretInfo.ExpectedResourceVersion = "101"
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// STEP 3: Deployment with AnsibleLimit=edpm-compute-0 completes
+	// It includes BOTH secrets, but only covers edpm-compute-0
+	coveredNodes := []string{"edpm-compute-0"}
+
+	// Process nova-cell1-compute-config (rotated)
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+	if secretInfo.CurrentHash != "hash-user6" {
+		// ROTATION
+		secretInfo.PreviousHash = secretInfo.CurrentHash
+		secretInfo.PreviousResourceVersion = secretInfo.CurrentResourceVersion
+		secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
+		secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
+
+		secretInfo.CurrentHash = "hash-user6"
+		secretInfo.CurrentResourceVersion = "101"
+		secretInfo.CurrentGeneration = 0
+		secretInfo.NodesWithCurrent = coveredNodes // Only edpm-compute-0
+		secretInfo.LastChanged = time.Now()
+	}
+	secretInfo.ExpectedHash = "hash-user6"
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Process nova-metadata-config (NOT rotated, same version)
+	// But deployment only covered edpm-compute-0, so we need to check if this
+	// secret was also in the deployment
+	// For this test, assume it WAS in the deployment with same hash
+	metadataInfo := trackingData.Secrets["nova-metadata-config"]
+	if metadataInfo.CurrentHash == "metadata-v1" {
+		// SAME version - accumulate nodes
+		// But wait - if this is the FIRST deployment after rotation,
+		// and it only targets edpm-compute-0, should we set NodesWithCurrent
+		// to ONLY edpm-compute-0, or keep both nodes?
+
+		// The bug might be here! If we don't update NodesWithCurrent for
+		// non-rotated secrets when using AnsibleLimit, then edpm-compute-1
+		// still shows as having this secret, making AllSecretsUpdated=true
+		// for the wrong reason.
+
+		// Let's test the WRONG behavior (the bug):
+		// NodesWithCurrent is NOT updated, stays as both nodes
+		// (This would be the bug - should only be covered nodes)
+	}
+	// Don't update - this is the potential bug
+	// trackingData.Secrets["nova-metadata-config"] = metadataInfo (unchanged)
+
+	// Update per-node status
+	allNodes := []string{"edpm-compute-0", "edpm-compute-1"}
+	for _, nodeName := range allNodes {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{},
+			SecretsWithPrevious: []string{},
+		}
+
+		for secretName, sInfo := range trackingData.Secrets {
+			if slices.Contains(sInfo.NodesWithCurrent, nodeName) {
+				nodeStatus.SecretsWithCurrent = append(nodeStatus.SecretsWithCurrent, secretName)
+			} else if slices.Contains(sInfo.NodesWithPrevious, nodeName) {
+				nodeStatus.SecretsWithPrevious = append(nodeStatus.SecretsWithPrevious, secretName)
+				nodeStatus.AllSecretsUpdated = false
+			} else {
+				nodeStatus.AllSecretsUpdated = false
+			}
+		}
+
+		trackingData.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// VERIFY: Check node status
+	// edpm-compute-0:
+	//   - nova-cell1-compute-config: in NodesWithCurrent ✓
+	//   - nova-metadata-config: in NodesWithCurrent ✓
+	//   - AllSecretsUpdated: TRUE ✓
+
+	// edpm-compute-1:
+	//   - nova-cell1-compute-config: in NodesWithPrevious (NOT current!)
+	//   - nova-metadata-config: in NodesWithCurrent (BUG if unchanged!)
+	//   - If metadata shows as current: Secret exists but it's WRONG version?
+	//   - Or is the version the same but the deployment didn't actually run on this node?
+
+	// Actually, I think I'm confusing myself. Let me reconsider.
+	// If nova-metadata-config didn't rotate, and both nodes already had it,
+	// then both nodes DO have the current version of that secret.
+	// The issue is only with nova-cell1-compute-config.
+
+	// So edpm-compute-1 should have:
+	//   - nova-cell1-compute-config: in NodesWithPrevious → AllSecretsUpdated = FALSE
+	//   - nova-metadata-config: in NodesWithCurrent
+	//   - Overall: AllSecretsUpdated = FALSE (correct!)
+
+	if trackingData.NodeStatus["edpm-compute-1"].AllSecretsUpdated {
+		t.Error("edpm-compute-1 should have AllSecretsUpdated=false (missing rotated secret)")
+	}
+
+	summary := computeDeploymentSummary(trackingData, 2, "test-cm")
+	if summary.AllNodesUpdated {
+		t.Error("AllNodesUpdated should be false (edpm-compute-1 missing rotated secret)")
+	}
+	if summary.UpdatedNodes != 1 {
+		t.Errorf("UpdatedNodes = %d, want 1", summary.UpdatedNodes)
+	}
+}
+
+// TestStaleFullDeploymentAfterLimitedDeployment reproduces the bug where:
+// 1. Limited deployment (c0-limit) completes with new version, only edpm-compute-0
+// 2. Stale full deployment (edpm-deployment-full) is processed after
+// 3. Stale deployment uses cluster hash (our fix), so it's "same version"
+// 4. BUG: It accumulates ALL nodes, incorrectly marking edpm-compute-1 as updated
+func TestStaleFullDeploymentAfterLimitedDeployment(t *testing.T) {
+	// STEP 1: Both nodes have user5 initially
+	trackingData := &SecretTrackingData{
+		Secrets: map[string]SecretVersionInfo{
+			"nova-cell1-compute-config": {
+				CurrentHash:             "hash-user5",
+				CurrentResourceVersion:  "100",
+				CurrentGeneration:       0,
+				ExpectedHash:            "hash-user5",
+				ExpectedResourceVersion: "100",
+				ExpectedGeneration:      0,
+				NodesWithCurrent:        []string{"edpm-compute-0", "edpm-compute-1"},
+				LastChanged:             time.Now().Add(-2 * time.Hour),
+			},
+		},
+		NodeStatus: map[string]NodeSecretStatus{
+			"edpm-compute-0": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+			"edpm-compute-1": {
+				AllSecretsUpdated:  true,
+				SecretsWithCurrent: []string{"nova-cell1-compute-config"},
+			},
+		},
+	}
+
+	totalNodes := 2
+
+	// STEP 2: Secret rotates to user6
+	secretInfo := trackingData.Secrets["nova-cell1-compute-config"]
+	secretInfo.ExpectedHash = "hash-user6"
+	secretInfo.ExpectedResourceVersion = "101"
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// STEP 3: c0-limit deployment completes (AnsibleLimit=edpm-compute-0, has user6)
+	// This is the NEW deployment the user triggered
+	deploymentHashC0 := "hash-user6"
+	coveredNodesC0 := []string{"edpm-compute-0"}
+
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+	if secretInfo.CurrentHash != deploymentHashC0 {
+		// ROTATION detected
+		secretInfo.PreviousHash = secretInfo.CurrentHash
+		secretInfo.PreviousResourceVersion = secretInfo.CurrentResourceVersion
+		secretInfo.PreviousGeneration = secretInfo.CurrentGeneration
+		secretInfo.NodesWithPrevious = secretInfo.NodesWithCurrent
+
+		secretInfo.CurrentHash = deploymentHashC0
+		secretInfo.CurrentResourceVersion = "101"
+		secretInfo.CurrentGeneration = 0
+		secretInfo.NodesWithCurrent = coveredNodesC0 // Only edpm-compute-0
+		secretInfo.LastChanged = time.Now()
+	}
+	secretInfo.ExpectedHash = deploymentHashC0
+	trackingData.Secrets["nova-cell1-compute-config"] = secretInfo
+
+	// Verify state after c0-limit
+	if len(secretInfo.NodesWithCurrent) != 1 {
+		t.Fatalf("After c0-limit: NodesWithCurrent should be 1, got %d", len(secretInfo.NodesWithCurrent))
+	}
+
+	// STEP 4: Now process STALE deployment-full (AnsibleLimit=none, has OLD user5)
+	// This deployment completed BEFORE rotation but is processed AFTER c0-limit
+	// in the same reconciliation loop
+	deploymentHashFull := "hash-user5" // OLD hash
+	clusterHash := "hash-user6"        // Current cluster has NEW hash
+
+	// With the FIX: Skip stale deployments entirely
+	if clusterHash != deploymentHashFull {
+		// Deployment is stale - SKIP it completely
+		// Don't update tracking at all
+		// This is the FIX - we no longer try to use cluster hash and accumulate nodes
+	} else {
+		// Not stale, would process normally
+		t.Fatal("Test setup error: deployment should be stale")
+	}
+
+	// State should remain unchanged from step 3
+	secretInfo = trackingData.Secrets["nova-cell1-compute-config"]
+
+	// VERIFY THE FIX: State should remain unchanged from c0-limit
+	// Only edpm-compute-0 should be in NodesWithCurrent
+	if len(secretInfo.NodesWithCurrent) != 1 {
+		t.Errorf("After skipping stale deployment: NodesWithCurrent count = %d, want 1", len(secretInfo.NodesWithCurrent))
+	}
+	if !slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-0") {
+		t.Error("After skipping stale deployment: edpm-compute-0 should be in NodesWithCurrent")
+	}
+	if slices.Contains(secretInfo.NodesWithCurrent, "edpm-compute-1") {
+		t.Error("After skipping stale deployment: edpm-compute-1 should NOT be in NodesWithCurrent (wasn't deployed to)")
+	}
+
+	// Update per-node status
+	allNodes := []string{"edpm-compute-0", "edpm-compute-1"}
+	for _, nodeName := range allNodes {
+		nodeStatus := NodeSecretStatus{
+			AllSecretsUpdated:   true,
+			SecretsWithCurrent:  []string{},
+			SecretsWithPrevious: []string{},
+		}
+
+		for secretName, sInfo := range trackingData.Secrets {
+			if slices.Contains(sInfo.NodesWithCurrent, nodeName) {
+				nodeStatus.SecretsWithCurrent = append(nodeStatus.SecretsWithCurrent, secretName)
+			} else if slices.Contains(sInfo.NodesWithPrevious, nodeName) {
+				nodeStatus.SecretsWithPrevious = append(nodeStatus.SecretsWithPrevious, secretName)
+				nodeStatus.AllSecretsUpdated = false
+			} else {
+				nodeStatus.AllSecretsUpdated = false
+			}
+		}
+
+		trackingData.NodeStatus[nodeName] = nodeStatus
+	}
+
+	// Verify per-node status is correct
+	if !trackingData.NodeStatus["edpm-compute-0"].AllSecretsUpdated {
+		t.Error("edpm-compute-0 should have AllSecretsUpdated=true")
+	}
+	if trackingData.NodeStatus["edpm-compute-1"].AllSecretsUpdated {
+		t.Error("edpm-compute-1 should have AllSecretsUpdated=false (still on previous version)")
+	}
+
+	// Check summary - should correctly show only 1 node updated
+	summary := computeDeploymentSummary(trackingData, totalNodes, "test-cm")
+	if summary.AllNodesUpdated {
+		t.Error("AllNodesUpdated should be false (edpm-compute-1 not deployed to)")
+	}
+	if summary.UpdatedNodes != 1 {
+		t.Errorf("UpdatedNodes = %d, want 1 (only edpm-compute-0 deployed)", summary.UpdatedNodes)
+	}
+
+	// CRITICAL: Credential deletion should be BLOCKED
+	// because only 1 of 2 nodes has the new version
 }

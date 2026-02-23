@@ -1495,25 +1495,31 @@ func (r *OpenStackDataPlaneNodeSetReconciler) updateSecretDeploymentTracking(
 		resourceVersion := clusterSecret.ResourceVersion
 		generation := clusterSecret.Generation
 
-		// Determine which hash to use: prefer current cluster state over stale deployment state
-		// This prevents issues when old deployments are processed after secret changes
+		// Check if deployment is stale (deployed hash != current cluster hash)
+		// If stale, skip tracking for this secret to avoid incorrectly marking nodes as updated
 		clusterSecretHash, hashErr := secret.Hash(clusterSecret)
-		hashToStore := secretHash // Default to deployment hash
 		if hashErr != nil {
-			Log.Error(hashErr, "Failed to compute cluster secret hash, using deployment hash",
+			Log.Error(hashErr, "Failed to compute cluster secret hash, skipping this secret",
 				"secret", secretName,
 				"deployment", deployment.Name)
-			// Non-fatal - continue with deployment hash
-		} else if clusterSecretHash != secretHash {
-			Log.Info("Cluster secret hash differs from deployment hash, using current cluster hash",
+			// Skip this secret - can't verify if deployment is stale
+			continue
+		}
+
+		if clusterSecretHash != secretHash {
+			Log.Info("Deployment is stale, skipping tracking for this secret",
 				"secret", secretName,
 				"deployment", deployment.Name,
 				"deploymentHash", secretHash,
 				"clusterHash", clusterSecretHash,
 				"clusterResourceVersion", resourceVersion)
-			// Use cluster hash to ensure tracking reflects current state, not stale deployment state
-			hashToStore = clusterSecretHash
+			// Skip this secret - deployment reflects old cluster state, not current
+			// If we processed it, we'd incorrectly mark nodes as having the current version
+			continue
 		}
+
+		// Deployment hash matches cluster hash - it's current, safe to process
+		hashToStore := secretHash
 
 		secretInfo, exists := trackingData.Secrets[secretName]
 
