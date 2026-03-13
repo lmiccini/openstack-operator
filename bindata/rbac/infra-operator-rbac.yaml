@@ -72,6 +72,7 @@ rules:
     - configmaps
     - pods
     - secrets
+    - serviceaccounts
     - services
   verbs:
     - create
@@ -96,17 +97,6 @@ rules:
     - pods/exec
   verbs:
     - create
-- apiGroups:
-    - ""
-  resources:
-    - serviceaccounts
-  verbs:
-    - create
-    - get
-    - list
-    - patch
-    - update
-    - watch
 - apiGroups:
     - apps
   resources:
