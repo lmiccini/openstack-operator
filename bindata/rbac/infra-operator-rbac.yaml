@@ -84,6 +84,15 @@ rules:
 - apiGroups:
     - ""
   resources:
+    - endpoints
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - ""
+  resources:
+    - events
     - pods/exec
   verbs:
     - create
@@ -284,24 +293,6 @@ rules:
     - patch
     - update
     - watch
-- apiGroups:
-    - rabbitmq.com
-  resources:
-    - rabbitmqclusters
-  verbs:
-    - create
-    - delete
-    - get
-    - list
-    - patch
-    - update
-    - watch
-- apiGroups:
-    - rabbitmq.com
-  resources:
-    - rabbitmqclusters/finalizers
-  verbs:
-    - update
 - apiGroups:
     - rabbitmq.openstack.org
   resources:

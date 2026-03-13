@@ -803,12 +803,6 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 						Name:  "METRICS_CERTS",
 						Value: "false",
 					})
-			case operatorv1beta1.RabbitMQOperatorName:
-				serviceOp.Deployment.Manager.Env = append(serviceOp.Deployment.Manager.Env,
-					corev1.EnvVar{
-						Name:  "METRICS_CERTS",
-						Value: "false",
-					})
 			case operatorv1beta1.SwiftOperatorName:
 				serviceOp.Deployment.Manager.Env = append(serviceOp.Deployment.Manager.Env,
 					corev1.EnvVar{
@@ -856,9 +850,9 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 	instance.Status.DisabledOperatorCount = &disabledOperators
 	instance.Status.EnabledOperatorCount = &enabledOperators
 
-	// serviceOperators a copy of operators details, without openstack-operator and rabbitmq-cluster-operator
-	// which get removed bellow when creating openstackOperator and rabbitmqOperator, since they use dedicated
-	// templates
+	// serviceOperators a copy of operators details, without openstack-operator
+	// which gets removed below when creating openstackOperator, since it uses a dedicated
+	// template
 	serviceOperators := operators
 
 	// openstack-operator-controller-manager
@@ -870,22 +864,10 @@ func (r *OpenStackReconciler) applyOperator(ctx context.Context, instance *opera
 		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
 	}
 
-	// rabbitmq-cluster-operator
-	rabbitmqOperator := operator.Operator{}
-	idx, op = operator.GetOperator(serviceOperators, operatorv1beta1.RabbitMQOperatorName)
-	if idx >= 0 {
-		rabbitmqOperator = op
-		// remove rabbitmq-cluster-operator from serviceOperators
-		serviceOperators = append(serviceOperators[:idx], serviceOperators[idx+1:]...)
-	}
-
 	data := bindata.MakeRenderData()
 
 	// global stuff
 	data.Data["OperatorNamespace"] = instance.Namespace
-
-	// rabbitmaq-cluster-operator-manager image rabbit.yaml
-	data.Data["RabbitmqOperator"] = rabbitmqOperator
 
 	// openstack-operator-controller-manager image operator.yaml
 	data.Data["OpenStackOperator"] = openstackOperator

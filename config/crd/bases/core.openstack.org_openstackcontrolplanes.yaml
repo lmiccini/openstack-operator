@@ -14138,11 +14138,18 @@ spec:
                                   x-kubernetes-list-type: atomic
                               type: object
                           type: object
-                        delayStartSeconds:
-                          default: 30
-                          format: int32
-                          minimum: 0
-                          type: integer
+                        config:
+                          properties:
+                            additionalConfig:
+                              type: string
+                            additionalPlugins:
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                            advancedConfig:
+                              type: string
+                          type: object
                         nodeSelector:
                           additionalProperties:
                             type: string
@@ -14260,9 +14267,8 @@ spec:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true
                           type: object
+                          x-kubernetes-preserve-unknown-fields: true
                         persistence:
-                          default:
-                            storage: 10Gi
                           properties:
                             storage:
                               anyOf:
@@ -14330,23 +14336,16 @@ spec:
                         rabbitmq:
                           properties:
                             additionalConfig:
-                              maxLength: 100000
                               type: string
                             additionalPlugins:
                               items:
-                                maxLength: 100
-                                pattern: ^\w+$
                                 type: string
-                              maxItems: 100
                               type: array
                             advancedConfig:
-                              maxLength: 100000
                               type: string
                             envConfig:
-                              maxLength: 100000
                               type: string
                             erlangInetConfig:
-                              maxLength: 2000
                               type: string
                           type: object
                         replicas:
@@ -14355,13 +14354,6 @@ spec:
                           minimum: 0
                           type: integer
                         resources:
-                          default:
-                            limits:
-                              cpu: 2000m
-                              memory: 2Gi
-                            requests:
-                              cpu: 1000m
-                              memory: 2Gi
                           properties:
                             claims:
                               items:
@@ -14394,42 +14386,6 @@ spec:
                                 x-kubernetes-int-or-string: true
                               type: object
                           type: object
-                        secretBackend:
-                          properties:
-                            externalSecret:
-                              properties:
-                                name:
-                                  default: ""
-                                  type: string
-                              type: object
-                              x-kubernetes-map-type: atomic
-                            vault:
-                              properties:
-                                annotations:
-                                  additionalProperties:
-                                    type: string
-                                  type: object
-                                defaultUserPath:
-                                  type: string
-                                defaultUserUpdaterImage:
-                                  type: string
-                                role:
-                                  type: string
-                                tls:
-                                  properties:
-                                    altNames:
-                                      type: string
-                                    commonName:
-                                      type: string
-                                    ipSans:
-                                      type: string
-                                    pkiIssuerPath:
-                                      type: string
-                                    pkiRootPath:
-                                      type: string
-                                  type: object
-                              type: object
-                          type: object
                         service:
                           properties:
                             annotations:
@@ -14437,25 +14393,24 @@ spec:
                                 type: string
                               type: object
                             ipFamilyPolicy:
-                              enum:
-                              - SingleStack
-                              - PreferDualStack
-                              - RequireDualStack
                               type: string
-                            labels:
-                              additionalProperties:
-                                type: string
-                              type: object
                             type:
-                              default: ClusterIP
-                              enum:
-                              - ClusterIP
-                              - LoadBalancer
-                              - NodePort
                               type: string
                           type: object
                         skipPostDeploySteps:
                           type: boolean
+                        storage:
+                          properties:
+                            storage:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              default: 10Gi
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            storageClassName:
+                              type: string
+                          type: object
                         terminationGracePeriodSeconds:
                           default: 604800
                           format: int64
