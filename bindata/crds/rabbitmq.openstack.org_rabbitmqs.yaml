@@ -1846,6 +1846,11 @@ spec:
                   the opentack-operator in the top-level CR (e.g. the ContainerImage)
                 format: int64
                 type: integer
+              oldCRCleaned:
+                description: |-
+                  OldCRCleaned - whether the old rabbitmq.com RabbitmqCluster CR has been
+                  cleaned up during migration from rabbitmq-cluster-operator.
+                type: boolean
               queueType:
                 description: QueueType - store whether default ha-all policy is present
                   or not
