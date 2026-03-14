@@ -1547,8 +1547,9 @@ spec:
                 type: object
               queueType:
                 description: |-
-                  QueueType to eventually apply the ha-all policy or configure default queue type for the cluster.
-                  Allowed values are: None, Mirrored, Quorum. Defaults to Quorum if not specified.
+                  QueueType - the default queue type for the cluster.
+                  Allowed values: Mirrored, Quorum. New clusters default to Quorum.
+                  Existing clusters without a value default to Mirrored.
                 type: string
               rabbitmq:
                 description: |-
@@ -1667,6 +1668,14 @@ spec:
                       volume claim
                     type: string
                 type: object
+              targetVersion:
+                description: |-
+                  TargetVersion - the desired RabbitMQ version (e.g., "4.2", "3.13.1").
+                  When set to a version different from Status.CurrentVersion, the controller
+                  will initiate a storage wipe and version upgrade. The controller updates
+                  Status.CurrentVersion once the upgrade completes.
+                pattern: ^\d+\.\d+(\.\d+)?$
+                type: string
               terminationGracePeriodSeconds:
                 default: 604800
                 description: TerminationGracePeriodSeconds - Timeout for graceful
@@ -1792,6 +1801,12 @@ spec:
                   - type
                   type: object
                 type: array
+              currentVersion:
+                description: |-
+                  CurrentVersion - the currently deployed RabbitMQ version (e.g., "3.9", "4.2")
+                  This is controller-managed and reflects the actual running version.
+                  Set Spec.TargetVersion to request a version change.
+                type: string
               defaultUser:
                 description: DefaultUser - Identifying information on default user
                   secret
@@ -1851,9 +1866,15 @@ spec:
                   OldCRCleaned - whether the old rabbitmq.com RabbitmqCluster CR has been
                   cleaned up during migration from rabbitmq-cluster-operator.
                 type: boolean
+              proxyRequired:
+                description: |-
+                  ProxyRequired - tracks whether the AMQP proxy sidecar is required for this cluster.
+                  Set to true when upgrading from RabbitMQ 3.x to 4.x with Quorum queues.
+                  The proxy allows non-durable clients to work with quorum queues during the upgrade window.
+                  Only cleared when the AnnotationClientsReconfigured annotation is set to "true".
+                type: boolean
               queueType:
-                description: QueueType - store whether default ha-all policy is present
-                  or not
+                description: QueueType - the active queue type for this cluster
                 type: string
               readyCount:
                 description: ReadyCount tracks ready replicas
@@ -1867,6 +1888,16 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              upgradePhase:
+                description: |-
+                  UpgradePhase - tracks the current phase of a version upgrade or migration.
+                  This allows resuming upgrades that failed midway.
+                type: string
+              wipeReason:
+                description: |-
+                  WipeReason - tracks why the current storage wipe was initiated.
+                  Persisted so that resumed upgrades use the correct handling path.
+                type: string
             type: object
         type: object
     served: true

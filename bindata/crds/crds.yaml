@@ -14676,6 +14676,9 @@ spec:
                             storageClassName:
                               type: string
                           type: object
+                        targetVersion:
+                          pattern: ^\d+\.\d+(\.\d+)?$
+                          type: string
                         terminationGracePeriodSeconds:
                           default: 604800
                           format: int64
@@ -21416,6 +21419,8 @@ spec:
                   properties:
                     glanceWsgi:
                       type: string
+                    rabbitmqVersion:
+                      type: string
                   type: object
                 type: object
               availableVersion:
@@ -21850,6 +21855,8 @@ spec:
               serviceDefaults:
                 properties:
                   glanceWsgi:
+                    type: string
+                  rabbitmqVersion:
                     type: string
                 type: object
               trackedCustomImages:

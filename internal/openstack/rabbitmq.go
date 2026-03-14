@@ -277,6 +277,13 @@ func reconcileRabbitMQ(
 			rabbitmq.Spec.TLS.CaSecretName = tlsCert
 			rabbitmq.Spec.TLS.DisableNonTLSListeners = true
 		}
+		// set the target rabbitmq-server version in spec
+		if version.Status.ServiceDefaults.RabbitmqVersion != nil {
+			rabbitmq.Spec.TargetVersion = version.Status.ServiceDefaults.RabbitmqVersion
+		} else {
+			rabbitmq.Spec.TargetVersion = ptr.To("3.9")
+		}
+
 		rabbitmq.Spec.ContainerImage = *version.Status.ContainerImages.RabbitmqImage
 		err := controllerutil.SetControllerReference(helper.GetBeforeObject(), rabbitmq, helper.GetScheme())
 		if err != nil {
