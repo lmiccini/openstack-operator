@@ -1150,7 +1150,32 @@ func (r *OpenStackReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *OpenStackReconciler) cleanupRabbitMQClusterOperator(ctx context.Context, instance *operatorv1beta1.OpenStack) error {
 	Log := r.GetLogger(ctx)
 
-	// List of namespaced resources to delete
+	// Check if any RabbitmqCluster instances still exist in our namespace
+	// before removing anything. The operator must remain running while
+	// instances are being migrated by the infra-operator.
+	rabbitmqClusterList := &uns.UnstructuredList{}
+	rabbitmqClusterList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "rabbitmq.com",
+		Version: "v1beta1",
+		Kind:    "RabbitmqClusterList",
+	})
+	if err := r.List(ctx, rabbitmqClusterList, client.InNamespace(instance.Namespace)); err != nil {
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "no matches for kind") {
+			// CRD already gone — nothing left to clean up
+			return nil
+		}
+		Log.Info("Could not list RabbitmqCluster resources, skipping cleanup", "error", err.Error())
+		return nil
+	}
+	if len(rabbitmqClusterList.Items) > 0 {
+		Log.Info("RabbitmqCluster instances still exist, skipping rabbitmq-cluster-operator cleanup", "count", len(rabbitmqClusterList.Items))
+		return nil
+	}
+
+	// No RabbitmqCluster instances remain in our namespace — safe to remove
+	// the operator deployment and namespaced resources.
+
+	// Namespaced resources (scoped to the OpenStack CR namespace only)
 	namespacedResources := []struct {
 		gvk  schema.GroupVersionKind
 		name string
@@ -1177,66 +1202,46 @@ func (r *OpenStackReconciler) cleanupRabbitMQClusterOperator(ctx context.Context
 		}
 	}
 
-	// Cluster-scoped RBAC resources
-	clusterRBACResources := []struct {
-		gvk  schema.GroupVersionKind
-		name string
-	}{
-		{schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRole"}, "rabbitmq-cluster-operator-manager-role"},
-		{schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRole"}, "rabbitmq-cluster-operator-proxy-role"},
-		{schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRoleBinding"}, "rabbitmq-cluster-operator-manager-rolebinding"},
-		{schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRoleBinding"}, "rabbitmq-cluster-operator-proxy-rolebinding"},
-	}
+	// Cluster-scoped RBAC (ClusterRoles, ClusterRoleBindings) is left in
+	// place intentionally. Without a running operator and ServiceAccount
+	// they are inert, and deleting them could break a user-installed
+	// rabbitmq-cluster-operator in another namespace that shares the same
+	// resource names.
 
-	for _, res := range clusterRBACResources {
-		obj := &uns.Unstructured{}
-		obj.SetGroupVersionKind(res.gvk)
-		obj.SetName(res.name)
-		if err := r.Delete(ctx, obj); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to delete %s %s: %w", res.gvk.Kind, res.name, err)
-			}
-		} else {
-			Log.Info("Deleted rabbitmq-cluster-operator resource", "kind", res.gvk.Kind, "name", res.name)
-		}
-	}
-
-	// Delete the rabbitmqclusters.rabbitmq.com CRD only if no instances remain.
-	// The infra-operator handles deleting RabbitmqCluster CRs after reparenting.
-	rabbitmqClusterList := &uns.UnstructuredList{}
-	rabbitmqClusterList.SetGroupVersionKind(schema.GroupVersionKind{
+	// Delete the CRD only if no RabbitmqCluster instances remain cluster-wide.
+	// This protects user-managed instances in other namespaces.
+	allInstances := &uns.UnstructuredList{}
+	allInstances.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "rabbitmq.com",
 		Version: "v1beta1",
 		Kind:    "RabbitmqClusterList",
 	})
-	canDeleteCRD := false
-	if err := r.List(ctx, rabbitmqClusterList); err != nil {
+	if err := r.List(ctx, allInstances); err != nil {
 		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "no matches for kind") {
 			// CRD already gone
 			return nil
 		}
-		Log.Info("Could not list RabbitmqCluster resources, skipping CRD deletion", "error", err.Error())
-	} else if len(rabbitmqClusterList.Items) == 0 {
-		canDeleteCRD = true
-	} else {
-		Log.Info("RabbitmqCluster instances still exist, skipping CRD deletion", "count", len(rabbitmqClusterList.Items))
+		Log.Info("Could not list RabbitmqCluster instances cluster-wide, skipping CRD deletion", "error", err.Error())
+		return nil
+	}
+	if len(allInstances.Items) > 0 {
+		Log.Info("RabbitmqCluster instances exist in other namespaces, skipping CRD deletion", "count", len(allInstances.Items))
+		return nil
 	}
 
-	if canDeleteCRD {
-		crd := &uns.Unstructured{}
-		crd.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   "apiextensions.k8s.io",
-			Version: "v1",
-			Kind:    "CustomResourceDefinition",
-		})
-		crd.SetName("rabbitmqclusters.rabbitmq.com")
-		if err := r.Delete(ctx, crd); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to delete rabbitmqclusters.rabbitmq.com CRD: %w", err)
-			}
-		} else {
-			Log.Info("Deleted rabbitmqclusters.rabbitmq.com CRD")
+	crd := &uns.Unstructured{}
+	crd.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "apiextensions.k8s.io",
+		Version: "v1",
+		Kind:    "CustomResourceDefinition",
+	})
+	crd.SetName("rabbitmqclusters.rabbitmq.com")
+	if err := r.Delete(ctx, crd); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete rabbitmqclusters.rabbitmq.com CRD: %w", err)
 		}
+	} else {
+		Log.Info("Deleted rabbitmqclusters.rabbitmq.com CRD")
 	}
 
 	return nil

@@ -268,6 +268,23 @@ func reconcileRabbitMQ(
 
 	op, err := controllerutil.CreateOrPatch(ctx, helper.GetClient(), rabbitmq, func() error {
 		spec.DeepCopyInto(&rabbitmq.Spec.RabbitMqSpecCore)
+
+		// Migrate deprecated override.service fields to the new service field.
+		// DeepCopyInto copies the template which may have override.service set
+		// (old format) but not service.type (new format), so we propagate here
+		// to avoid relying solely on the webhook for migration.
+		if rabbitmq.Spec.Override != nil && rabbitmq.Spec.Override.Service != nil {
+			if rabbitmq.Spec.Override.Service.Spec != nil && rabbitmq.Spec.Override.Service.Spec.Type != "" {
+				rabbitmq.Spec.Service.Type = rabbitmq.Spec.Override.Service.Spec.Type
+			}
+			if len(rabbitmq.Spec.Service.Annotations) == 0 && rabbitmq.Spec.Override.Service.Annotations != nil {
+				rabbitmq.Spec.Service.Annotations = make(map[string]string)
+				for k, v := range rabbitmq.Spec.Override.Service.Annotations {
+					rabbitmq.Spec.Service.Annotations[k] = v
+				}
+			}
+		}
+
 		if rabbitmq.Spec.Persistence.StorageClassName == nil {
 			log.Info(fmt.Sprintf("Setting StorageClassName: %s", instance.Spec.StorageClass))
 			rabbitmq.Spec.Persistence.StorageClassName = &instance.Spec.StorageClass
