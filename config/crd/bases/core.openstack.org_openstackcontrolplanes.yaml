@@ -2398,11 +2398,6 @@ spec:
                                 default: DesignatePassword
                                 type: string
                             type: object
-                          redisHostIPs:
-                            items:
-                              type: string
-                            type: array
-                            x-kubernetes-list-type: atomic
                           replicas:
                             default: 1
                             format: int32
@@ -2662,11 +2657,6 @@ spec:
                                 default: DesignatePassword
                                 type: string
                             type: object
-                          redisHostIPs:
-                            items:
-                              type: string
-                            type: array
-                            x-kubernetes-list-type: atomic
                           replicas:
                             default: 1
                             format: int32
