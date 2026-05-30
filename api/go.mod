@@ -6,7 +6,7 @@ require (
 	github.com/cert-manager/cert-manager v1.16.5
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/onsi/ginkgo/v2 v2.28.2
-	github.com/onsi/gomega v1.41.0
+	github.com/onsi/gomega v1.42.0
 	github.com/openstack-k8s-operators/barbican-operator/api v0.6.1-0.20260527145826-20983565868f
 	github.com/openstack-k8s-operators/cinder-operator/api v0.6.1-0.20260530100208-ea1fdd2fc611
 	github.com/openstack-k8s-operators/designate-operator/api v0.6.1-0.20260519055835-b70eb514ecfa
@@ -16,7 +16,7 @@ require (
 	github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260528132651-48b751fb6dc8
 	github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260526085209-19657d0c07ff
 	github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260520090027-4d7b7a01c0bf
-	github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260526114926-7ebfadd589db
+	github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260626101608-0959e9d46047
 	github.com/openstack-k8s-operators/lib-common/modules/storage v0.6.1-0.20260526114926-7ebfadd589db
 	github.com/openstack-k8s-operators/manila-operator/api v0.6.1-0.20260530100208-7bac36d5cf37
 	github.com/openstack-k8s-operators/mariadb-operator/api v0.6.1-0.20260528064220-a039cf4cba9b
@@ -135,3 +135,5 @@ replace k8s.io/code-generator => k8s.io/code-generator v0.31.14 //allow-merging
 replace k8s.io/component-base => k8s.io/component-base v0.31.14 //allow-merging
 
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.1.2-0.20241127223932-88edb96860cf //allow-merging
+
+replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20260706063637-8aa5b96e9bb8
