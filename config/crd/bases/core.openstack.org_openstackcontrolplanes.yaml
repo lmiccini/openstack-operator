@@ -878,6 +878,11 @@ spec:
                                 properties:
                                   livenessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -893,13 +898,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   readinessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -915,13 +938,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   startupProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -937,10 +978,23 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                 type: object
                               service:
@@ -1079,6 +1133,11 @@ spec:
                                 properties:
                                   livenessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -1094,13 +1153,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   readinessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -1116,13 +1193,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   startupProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -1138,10 +1233,23 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                 type: object
                             type: object
@@ -1214,6 +1322,11 @@ spec:
                                   properties:
                                     livenessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -1229,13 +1342,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     readinessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -1251,13 +1382,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     startupProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -1273,10 +1422,23 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                   type: object
                               type: object
@@ -1349,6 +1511,11 @@ spec:
                                 properties:
                                   livenessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -1364,13 +1531,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   readinessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -1386,13 +1571,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   startupProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -1408,10 +1611,23 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                 type: object
                             type: object
@@ -1484,6 +1700,11 @@ spec:
                                   properties:
                                     livenessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -1499,13 +1720,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     readinessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -1521,13 +1760,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     startupProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -1543,10 +1800,23 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                   type: object
                               type: object
@@ -4899,6 +5169,11 @@ spec:
                                   properties:
                                     livenessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -4914,13 +5189,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     readinessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -4936,13 +5229,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     startupProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -4958,10 +5269,23 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                   type: object
                                 service:
@@ -9725,6 +10049,11 @@ spec:
                                 properties:
                                   livenessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -9740,13 +10069,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   readinessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -9762,13 +10109,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   startupProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -9784,10 +10149,23 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                 type: object
                               service:
@@ -9928,6 +10306,11 @@ spec:
                                 properties:
                                   livenessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -9943,13 +10326,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   readinessProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -9965,13 +10366,31 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                   startupProbes:
                                     properties:
+                                      command:
+                                        items:
+                                          type: string
+                                        type: array
+                                        x-kubernetes-list-type: atomic
                                       failureThreshold:
                                         format: int32
                                         minimum: 1
@@ -9987,10 +10406,23 @@ spec:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      port:
+                                        format: int32
+                                        maximum: 65535
+                                        minimum: 1
+                                        type: integer
+                                      scheme:
+                                        type: string
                                       timeoutSeconds:
                                         format: int32
                                         minimum: 1
                                         type: integer
+                                      type:
+                                        enum:
+                                        - HTTP
+                                        - Exec
+                                        - ""
+                                        type: string
                                     type: object
                                 type: object
                             type: object
@@ -10065,6 +10497,11 @@ spec:
                                   properties:
                                     livenessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -10080,13 +10517,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     readinessProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -10102,13 +10557,31 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                     startupProbes:
                                       properties:
+                                        command:
+                                          items:
+                                            type: string
+                                          type: array
+                                          x-kubernetes-list-type: atomic
                                         failureThreshold:
                                           format: int32
                                           minimum: 1
@@ -10124,10 +10597,23 @@ spec:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        port:
+                                          format: int32
+                                          maximum: 65535
+                                          minimum: 1
+                                          type: integer
+                                        scheme:
+                                          type: string
                                         timeoutSeconds:
                                           format: int32
                                           minimum: 1
                                           type: integer
+                                        type:
+                                          enum:
+                                          - HTTP
+                                          - Exec
+                                          - ""
+                                          type: string
                                       type: object
                                   type: object
                               type: object
