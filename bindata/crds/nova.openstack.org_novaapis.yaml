@@ -425,6 +425,12 @@ spec:
                       current project
                     type: string
                 type: object
+              transportURLSecret:
+                description: |-
+                  TransportURLSecret is the name of the secret containing the RabbitMQ
+                  transport URL. Used to trigger a generation bump during credential
+                  rotation so the parent controller can track rollout progress.
+                type: string
             required:
             - apiDatabaseHostname
             - cell0DatabaseHostname
