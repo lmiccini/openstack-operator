@@ -90,6 +90,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
 github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
+github.com/lmiccini/infra-operator/apis v0.0.0-20260627055611-32191646fac3 h1:QVBvkEgpGcpD9nBlzXQW9w0i8X3p6vjeD/o+NbK28wk=
+github.com/lmiccini/infra-operator/apis v0.0.0-20260627055611-32191646fac3/go.mod h1:fcTuxQ/hzNBPxCf99vbsBt7dgZ3W12gUthaCXSvkPr8=
 github.com/mailru/easyjson v0.9.0 h1:PrnmzHw7262yW8sTBwxi1PdJA3Iw/EKBa8psRf7d9a4=
 github.com/mailru/easyjson v0.9.0/go.mod h1:1+xMtQp2MRNVL/V1bOzuP3aP8VNwRW55fQUto+XFtTU=
 github.com/maruel/natural v1.1.1 h1:Hja7XhhmvEFhcByqDoHz9QZbkWey+COd9xWfCfn1ioo=
@@ -126,8 +128,6 @@ github.com/openstack-k8s-operators/heat-operator/api v0.6.1-0.20260620095520-3bd
 github.com/openstack-k8s-operators/heat-operator/api v0.6.1-0.20260620095520-3bd0eaaddccb/go.mod h1:2YiZE26ed/PAKyv5ZVQPK2uLESZEhFLHN67wuF/KMCE=
 github.com/openstack-k8s-operators/horizon-operator/api v0.6.1-0.20260620095236-ada2819d1203 h1:UMwLclimzdmyN/HEvG0wktDh05u8w+tWTcagLy0vGik=
 github.com/openstack-k8s-operators/horizon-operator/api v0.6.1-0.20260620095236-ada2819d1203/go.mod h1:U53QIfl8EuyTRD4nhg5xqknYRiCDMT3r+1gNrgkbRME=
-github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260618172644-5a4764bdaa36 h1:nGpBRRuWJbxiH9Vv5ir0TUWmL3XFChvqvXX8We5Lvnc=
-github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260618172644-5a4764bdaa36/go.mod h1:fcTuxQ/hzNBPxCf99vbsBt7dgZ3W12gUthaCXSvkPr8=
 github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260620095519-8d1db7761064 h1:bTBPtyWYwt2TdM/VZO1es09qP7bSrA/IoCfJnF18dJE=
 github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260620095519-8d1db7761064/go.mod h1:ZY/+8pjTW/ajyLx8PQt45GCkFhqHSiSkYP2UBSDv/dM=
 github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260621105127-dc5935839186 h1:HOjyk0EPGukcKwGcruTmuPcOoqtzqgWC2Toq92RBV8w=
