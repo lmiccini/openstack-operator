@@ -138,6 +138,8 @@ github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0
 github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+fNqagV/RAw=
 github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
 github.com/leodido/go-urn v1.4.0/go.mod h1:bvxc+MVxLKB4z00jd1z+Dvzr47oO32F/QSNjSBOlFxI=
+github.com/lmiccini/infra-operator/apis v0.0.0-20260724070814-d2e8d92bb55f h1:/HTk3lZ2fSPepkaVXgL9rvPBkZVciQPQO50EvpzVM4Q=
+github.com/lmiccini/infra-operator/apis v0.0.0-20260724070814-d2e8d92bb55f/go.mod h1:1w5ZG9RCR3JQumJnLg/gAMdKOgV0O0He0ZxJuj65KN4=
 github.com/maruel/natural v1.1.1 h1:Hja7XhhmvEFhcByqDoHz9QZbkWey+COd9xWfCfn1ioo=
 github.com/maruel/natural v1.1.1/go.mod h1:v+Rfd79xlw1AgVBjbO0BEQmptqb5HvL/k9GRHB7ZKEg=
 github.com/metal3-io/baremetal-operator/apis v0.11.7 h1:k2ulCHMciv8NdOfUgMrY29E5J78DDozVfaN2QG+XfNQ=
@@ -170,8 +172,6 @@ github.com/openstack-k8s-operators/heat-operator/api v0.6.1-0.20260718191337-97f
 github.com/openstack-k8s-operators/heat-operator/api v0.6.1-0.20260718191337-97fcf4988779/go.mod h1:RVmlvJy01H1cAV2N6z6jz2R8ErTxe2axXjFtkz+0xsM=
 github.com/openstack-k8s-operators/horizon-operator/api v0.6.1-0.20260718191627-f2f7cc147655 h1:eRkYQCS1OjQ+iUfK88nGoJu5fwzpLgCD2Cy3OS/zxPM=
 github.com/openstack-k8s-operators/horizon-operator/api v0.6.1-0.20260718191627-f2f7cc147655/go.mod h1:tyceyTfPTUEEHhVvvnzlWwdEqI7DgPGjdMYa/fBnA6Q=
-github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260718084237-5df87de62106 h1:EABK5QOJUmlqvhbWMPLExJ7z775Xbq5rF8VVq5pW77Y=
-github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260718084237-5df87de62106/go.mod h1:1w5ZG9RCR3JQumJnLg/gAMdKOgV0O0He0ZxJuj65KN4=
 github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260718191922-f78a06a7293f h1:MvbTvJTv++1dNjWlTyQDmPS4YGR3XAstVoz/in7rk94=
 github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260718191922-f78a06a7293f/go.mod h1:9e4PMAqfW+Agrsh5QQHF5cD7Ch2e/vZ4SQbyIR7rJl4=
 github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260718203920-ad47de5b3417 h1:mIkzjhflVJDAsgYilKJF6uu43InRyBEqt0an1kZfeBA=
