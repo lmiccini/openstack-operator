@@ -213,6 +213,7 @@ func reconcileRedis(
 	helper.GetLogger().Info("Reconciling Redis", "Redis.Namespace", instance.Namespace, "Redis.Name", name)
 
 	tlsCert := ""
+	mtlsCert := ""
 	if instance.Spec.TLS.PodLevel.Enabled {
 		clusterDomain := clusterdns.GetDNSClusterDomain()
 		certRequest := certmanager.CertificateRequest{
@@ -253,6 +254,43 @@ func reconcileRedis(
 		}
 
 		tlsCert = certSecret.Name
+
+		// mTLS client cert
+		if spec.TLS.MTLS.SslVerifyMode == "Request" || spec.TLS.MTLS.SslVerifyMode == "Require" {
+			helper.GetLogger().Info("Reconciling Redis mTLS", "Redis.Namespace", instance.Namespace, "Redis.Name", name)
+			certRequest = certmanager.CertificateRequest{
+				IssuerName: instance.GetInternalIssuer(),
+				CertName:   fmt.Sprintf("%s-mtls", redis.Name),
+				Hostnames: []string{
+					fmt.Sprintf("*.%s.svc", instance.Namespace),
+					fmt.Sprintf("*.%s.svc.%s", instance.Namespace, clusterDomain),
+				},
+				Usages: []certmgrv1.KeyUsage{
+					certmgrv1.UsageKeyEncipherment,
+					certmgrv1.UsageDigitalSignature,
+					certmgrv1.UsageClientAuth,
+				},
+				Labels: map[string]string{ServiceCertSelector: ""},
+			}
+			if instance.Spec.TLS.PodLevel.Internal.Cert.Duration != nil {
+				certRequest.Duration = &instance.Spec.TLS.PodLevel.Internal.Cert.Duration.Duration
+			}
+			if instance.Spec.TLS.PodLevel.Internal.Cert.RenewBefore != nil {
+				certRequest.RenewBefore = &instance.Spec.TLS.PodLevel.Internal.Cert.RenewBefore.Duration
+			}
+			certSecret, ctrlResult, err = certmanager.EnsureCert(
+				ctx,
+				helper,
+				certRequest,
+				nil)
+			if err != nil {
+				return redisFailed, redis, ctrlResult, err
+			} else if (ctrlResult != ctrl.Result{}) {
+				return redisCreating, redis, ctrlResult, nil
+			}
+
+			mtlsCert = certSecret.Name
+		}
 	}
 
 	if spec.NodeSelector == nil {
@@ -270,8 +308,10 @@ func reconcileRedis(
 	op, err := controllerutil.CreateOrPatch(ctx, helper.GetClient(), redis, func() error {
 		spec.DeepCopyInto(&redis.Spec.RedisSpecCore)
 		if tlsCert != "" {
-
 			redis.Spec.TLS.SecretName = ptr.To(tlsCert)
+		}
+		if mtlsCert != "" {
+			redis.Spec.TLS.MTLS.AuthCertSecret.SecretName = ptr.To(mtlsCert)
 		}
 		redis.Spec.TLS.CaBundleSecretName = tls.CABundleSecret
 
