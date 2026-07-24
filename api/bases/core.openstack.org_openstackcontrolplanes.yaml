@@ -14981,6 +14981,8 @@ spec:
                               type: string
                             type: array
                             x-kubernetes-list-type: atomic
+                          redisMTLSSecret:
+                            type: string
                           resources:
                             properties:
                               claims:
@@ -15146,6 +15148,8 @@ spec:
                               type: string
                             type: array
                             x-kubernetes-list-type: atomic
+                          redisMTLSSecret:
+                            type: string
                           resources:
                             properties:
                               claims:
@@ -15417,6 +15421,8 @@ spec:
                               type: string
                             type: array
                             x-kubernetes-list-type: atomic
+                          redisMTLSSecret:
+                            type: string
                           resources:
                             properties:
                               claims:

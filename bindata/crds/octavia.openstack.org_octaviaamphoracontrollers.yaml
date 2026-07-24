@@ -195,6 +195,11 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              redisMTLSSecret:
+                description: |-
+                  RedisMTLSSecret - name of the secret containing the mTLS client
+                  certificate for Redis authentication
+                type: string
               resources:
                 description: |-
                   Resources - Compute Resources required by this service (Limits/Requests).

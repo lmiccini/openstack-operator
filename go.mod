@@ -181,3 +181,7 @@ replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20250627150254-e9823e9
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.3.0 //allow-merging
 
 replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20260724070814-d2e8d92bb55f
+
+replace github.com/openstack-k8s-operators/designate-operator/api => github.com/lmiccini/designate-operator/api v0.0.0-20260724135633-414c6a1eef7b
+
+replace github.com/openstack-k8s-operators/octavia-operator/api => github.com/lmiccini/octavia-operator/api v0.0.0-20260724135700-82099ea84748
