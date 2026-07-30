@@ -16,7 +16,7 @@ require (
 	github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260718084237-5df87de62106
 	github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260718191922-f78a06a7293f
 	github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260718203920-ad47de5b3417
-	github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260717092345-ab1ee7b97c67
+	github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260724091355-a86f6d29e055
 	github.com/openstack-k8s-operators/lib-common/modules/storage v0.6.1-0.20260717092345-ab1ee7b97c67
 	github.com/openstack-k8s-operators/manila-operator/api v0.6.1-0.20260718191338-9471efd19aff
 	github.com/openstack-k8s-operators/mariadb-operator/api v0.6.1-0.20260719111650-de1f5daf20d2
@@ -52,7 +52,7 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.1 // indirect
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
@@ -143,4 +143,4 @@ replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20250627150254-e9823e9
 
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.3.0 //allow-merging
 
-replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20260724052755-59d20550e637
+replace github.com/openstack-k8s-operators/infra-operator/apis => github.com/lmiccini/infra-operator/apis v0.0.0-20260730063737-46583b952a76
