@@ -4,14 +4,14 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
   creationTimestamp: null
-  name: watchers.watcher.openstack.org
+  name: cyborgs.cyborg.openstack.org
 spec:
-  group: watcher.openstack.org
+  group: cyborg.openstack.org
   names:
-    kind: Watcher
-    listKind: WatcherList
-    plural: watchers
-    singular: watcher
+    kind: Cyborg
+    listKind: CyborgList
+    plural: cyborgs
+    singular: cyborg
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -26,7 +26,7 @@ spec:
     name: v1beta1
     schema:
       openAPIV3Schema:
-        description: Watcher is the Schema for the watchers API
+        description: Cyborg is the Schema for the cyborgs API.
         properties:
           apiVersion:
             description: |-
@@ -46,34 +46,180 @@ spec:
           metadata:
             type: object
           spec:
-            description: WatcherSpec defines the desired state of Watcher
+            description: CyborgSpec defines the desired state of Cyborg.
             properties:
+              agentContainerImageURL:
+                description: AgentContainerImageURL
+                type: string
               apiContainerImageURL:
                 description: APIContainerImageURL
                 type: string
               apiServiceTemplate:
                 default:
                   replicas: 1
-                description: APIServiceTemplate - define the watcher-api service
+                description: APIServiceTemplate - define the cyborg-api service
                 properties:
                   customServiceConfig:
                     description: |-
                       CustomServiceConfig - customize the service config using this parameter to change service defaults,
                       or overwrite rendered information using raw OpenStack config format. The content gets added to
-                      to /etc/<service>/<service>.conf.d directory as a custom config file.
+                      to /etc/<service>/<service>.conf.d directory as custom.conf file.
                     type: string
                   nodeSelector:
                     additionalProperties:
                       type: string
                     description: |-
-                      NodeSelector to target subset of worker nodes running this component. Setting here overrides
-                      any global NodeSelector settings within the Watcher CR.
+                      NodeSelector to target subset of worker nodes running this service. Setting here overrides
+                      any global NodeSelector settings within the Cyborg CR.
                     type: object
                   override:
-                    description: |-
-                      Override, provides the ability to override the generated manifest of
-                      several child resources.
+                    description: Override, provides the ability to override the generated
+                      manifest of several child resources.
                     properties:
+                      probes:
+                        description: Override probe configuration for the service
+                          deployment
+                        properties:
+                          livenessProbes:
+                            description: |-
+                              Override configuration for the StatefulSet like Probes and other tunable
+                              fields
+                            properties:
+                              command:
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              failureThreshold:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              initialDelaySeconds:
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              path:
+                                pattern: ^(/.*)?$
+                                type: string
+                              periodSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              scheme:
+                                description: URIScheme identifies the scheme used
+                                  for connection to a host for Get actions
+                                type: string
+                              timeoutSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              type:
+                                description: ProbeHandlerType defines the type of
+                                  probe handler
+                                enum:
+                                - HTTP
+                                - Exec
+                                - ""
+                                type: string
+                            type: object
+                          readinessProbes:
+                            description: ProbeConf - the configuration for liveness
+                              and readiness probes
+                            properties:
+                              command:
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              failureThreshold:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              initialDelaySeconds:
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              path:
+                                pattern: ^(/.*)?$
+                                type: string
+                              periodSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              scheme:
+                                description: URIScheme identifies the scheme used
+                                  for connection to a host for Get actions
+                                type: string
+                              timeoutSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              type:
+                                description: ProbeHandlerType defines the type of
+                                  probe handler
+                                enum:
+                                - HTTP
+                                - Exec
+                                - ""
+                                type: string
+                            type: object
+                          startupProbes:
+                            description: ProbeConf - the configuration for liveness
+                              and readiness probes
+                            properties:
+                              command:
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              failureThreshold:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              initialDelaySeconds:
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              path:
+                                pattern: ^(/.*)?$
+                                type: string
+                              periodSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              scheme:
+                                description: URIScheme identifies the scheme used
+                                  for connection to a host for Get actions
+                                type: string
+                              timeoutSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              type:
+                                description: ProbeHandlerType defines the type of
+                                  probe handler
+                                enum:
+                                - HTTP
+                                - Exec
+                                - ""
+                                type: string
+                            type: object
+                        type: object
                       service:
                         additionalProperties:
                           description: |-
@@ -225,14 +371,13 @@ spec:
                               type: object
                           type: object
                         description: |-
-                          Override configuration for the Service created to serve traffic to
-                          the cluster.
+                          Override configuration for the Service created to serve traffic to the cluster.
                           The key must be the endpoint type (public, internal)
                         type: object
                     type: object
                   replicas:
                     default: 1
-                    description: Replicas of WatcherAPI service to run
+                    description: Replicas of the service to run
                     format: int32
                     maximum: 32
                     minimum: 0
@@ -352,184 +497,192 @@ spec:
                 description: APITimeout for Route and Apache
                 minimum: 10
                 type: integer
-              applierContainerImageURL:
-                description: ApplierContainerImageURL
-                type: string
-              applierServiceTemplate:
-                default:
-                  replicas: 1
-                description: WatcherApplierTemplate - define the watcher-applier service
-                properties:
-                  customServiceConfig:
-                    description: |-
-                      CustomServiceConfig - customize the service config using this parameter to change service defaults,
-                      or overwrite rendered information using raw OpenStack config format. The content gets added to
-                      to /etc/<service>/<service>.conf.d directory as a custom config file.
-                    type: string
-                  nodeSelector:
-                    additionalProperties:
-                      type: string
-                    description: |-
-                      NodeSelector to target subset of worker nodes running this component. Setting here overrides
-                      any global NodeSelector settings within the Watcher CR.
-                    type: object
-                  replicas:
-                    default: 1
-                    description: Replicas of WatcherApplier service to run
-                    format: int32
-                    maximum: 1
-                    minimum: 0
-                    type: integer
-                  resources:
-                    description: |-
-                      Resources - Compute Resources required by this service (Limits/Requests).
-                      https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                    properties:
-                      claims:
-                        description: |-
-                          Claims lists the names of resources, defined in spec.resourceClaims,
-                          that are used by this container.
-
-                          This is an alpha field and requires enabling the
-                          DynamicResourceAllocation feature gate.
-
-                          This field is immutable. It can only be set for containers.
-                        items:
-                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
-                          properties:
-                            name:
-                              description: |-
-                                Name must match the name of one entry in pod.spec.resourceClaims of
-                                the Pod where this field is used. It makes that resource available
-                                inside a container.
-                              type: string
-                            request:
-                              description: |-
-                                Request is the name chosen for a request in the referenced claim.
-                                If empty, everything from the claim is made available, otherwise
-                                only the result of this request.
-                              type: string
-                          required:
-                          - name
-                          type: object
-                        type: array
-                        x-kubernetes-list-map-keys:
-                        - name
-                        x-kubernetes-list-type: map
-                      limits:
-                        additionalProperties:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        description: |-
-                          Limits describes the maximum amount of compute resources allowed.
-                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                        type: object
-                      requests:
-                        additionalProperties:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        description: |-
-                          Requests describes the minimum amount of compute resources required.
-                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
-                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                        type: object
-                    type: object
-                  topologyRef:
-                    description: |-
-                      TopologyRef to apply the Topology defined by the associated CR referenced
-                      by name
-                    properties:
-                      name:
-                        description: Name - The Topology CR name that the Service
-                          references
-                        type: string
-                      namespace:
-                        description: |-
-                          Namespace - The Namespace to fetch the Topology CR referenced
-                          NOTE: Namespace currently points by default to the same namespace where
-                          the Service is deployed. Customizing the namespace is not supported and
-                          webhooks prevent editing this field to a value different from the
-                          current project
-                        type: string
-                    type: object
-                type: object
               auth:
                 description: Auth - Parameters related to authentication (shared by
-                  all Watcher components)
+                  all Cyborg services)
                 properties:
                   applicationCredentialSecret:
-                    description: ApplicationCredentialSecret - Secret containing Application
-                      Credential ID and Secret
+                    description: |-
+                      ApplicationCredentialSecret - the name of the k8s Secret that contains the
+                      application credential data used for authentication
                     type: string
                 type: object
-              customServiceConfig:
-                description: |-
-                  CustomServiceConfig - customize the service config using this parameter to change service defaults,
-                  or overwrite rendered information using raw OpenStack config format. The content gets added to
-                  to /etc/<service>/<service>.conf.d directory as a custom config file.
+              conductorContainerImageURL:
+                description: ConductorContainerImageURL
                 type: string
-              databaseAccount:
-                default: watcher
-                description: DatabaseAccount - MariaDBAccount CR name used for watcher
-                  DB, defaults to watcher
-                type: string
-              databaseInstance:
-                description: |-
-                  MariaDB instance name
-                  Required to use the mariadb-operator instance to create the DB and user
-                type: string
-              dbPurge:
-                description: DBPurge defines the parameters for the Watcher DB purging
-                  cron job
-                properties:
-                  purgeAge:
-                    default: 90
-                    description: |-
-                      PurgeAge defines the minimum age of soft-deleted records in days that can be
-                      deleted from the shadow tables
-                    minimum: 1
-                    type: integer
-                  schedule:
-                    default: 0 1 * * *
-                    description: |-
-                      Schedule defines when to run the Watcher DB Purge job in a cron format.
-                      By default it runs everyday at 01:00.
-                    type: string
-                type: object
-              decisionengineContainerImageURL:
-                description: DecisionEngineContainerImageURL
-                type: string
-              decisionengineServiceTemplate:
+              conductorServiceTemplate:
                 default:
                   replicas: 1
-                description: DecisionEngineServiceTemplate - define the watcher-decision-engine
+                description: ConductorServiceTemplate - define the cyborg-conductor
                   service
                 properties:
                   customServiceConfig:
                     description: |-
                       CustomServiceConfig - customize the service config using this parameter to change service defaults,
                       or overwrite rendered information using raw OpenStack config format. The content gets added to
-                      to /etc/<service>/<service>.conf.d directory as a custom config file.
+                      to /etc/<service>/<service>.conf.d directory as custom.conf file.
                     type: string
                   nodeSelector:
                     additionalProperties:
                       type: string
                     description: |-
-                      NodeSelector to target subset of worker nodes running this component. Setting here overrides
-                      any global NodeSelector settings within the Watcher CR.
+                      NodeSelector to target subset of worker nodes running this service. Setting here overrides
+                      any global NodeSelector settings within the Cyborg CR.
+                    type: object
+                  override:
+                    description: Override, provides the ability to override the generated
+                      manifest of several child resources.
+                    properties:
+                      probes:
+                        description: Override probe configuration for the service
+                          deployment
+                        properties:
+                          livenessProbes:
+                            description: |-
+                              Override configuration for the StatefulSet like Probes and other tunable
+                              fields
+                            properties:
+                              command:
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              failureThreshold:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              initialDelaySeconds:
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              path:
+                                pattern: ^(/.*)?$
+                                type: string
+                              periodSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              scheme:
+                                description: URIScheme identifies the scheme used
+                                  for connection to a host for Get actions
+                                type: string
+                              timeoutSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              type:
+                                description: ProbeHandlerType defines the type of
+                                  probe handler
+                                enum:
+                                - HTTP
+                                - Exec
+                                - ""
+                                type: string
+                            type: object
+                          readinessProbes:
+                            description: ProbeConf - the configuration for liveness
+                              and readiness probes
+                            properties:
+                              command:
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              failureThreshold:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              initialDelaySeconds:
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              path:
+                                pattern: ^(/.*)?$
+                                type: string
+                              periodSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              scheme:
+                                description: URIScheme identifies the scheme used
+                                  for connection to a host for Get actions
+                                type: string
+                              timeoutSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              type:
+                                description: ProbeHandlerType defines the type of
+                                  probe handler
+                                enum:
+                                - HTTP
+                                - Exec
+                                - ""
+                                type: string
+                            type: object
+                          startupProbes:
+                            description: ProbeConf - the configuration for liveness
+                              and readiness probes
+                            properties:
+                              command:
+                                items:
+                                  type: string
+                                type: array
+                                x-kubernetes-list-type: atomic
+                              failureThreshold:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              initialDelaySeconds:
+                                format: int32
+                                minimum: 0
+                                type: integer
+                              path:
+                                pattern: ^(/.*)?$
+                                type: string
+                              periodSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              scheme:
+                                description: URIScheme identifies the scheme used
+                                  for connection to a host for Get actions
+                                type: string
+                              timeoutSeconds:
+                                format: int32
+                                minimum: 1
+                                type: integer
+                              type:
+                                description: ProbeHandlerType defines the type of
+                                  probe handler
+                                enum:
+                                - HTTP
+                                - Exec
+                                - ""
+                                type: string
+                            type: object
+                        type: object
                     type: object
                   replicas:
                     default: 1
-                    description: Replicas of WatcherDecisionEngine service to run
+                    description: Replicas of the service to run
                     format: int32
-                    maximum: 1
+                    maximum: 32
                     minimum: 0
                     type: integer
                   resources:
@@ -612,10 +765,22 @@ spec:
                         type: string
                     type: object
                 type: object
-              memcachedInstance:
-                default: memcached
-                description: MemcachedInstance is the name of the Memcached CR that
-                  all watcher service will use.
+              databaseAccount:
+                default: cyborg
+                description: DatabaseAccount - MariaDBAccount to use when accessing
+                  the API DB
+                type: string
+              databaseInstance:
+                default: openstack
+                description: |-
+                  DatabaseInstance is the name of the MariaDB CR to select the DB
+                  Service instance used for the Cyborg API DB.
+                type: string
+              keystoneInstance:
+                default: keystone
+                description: |-
+                  KeystoneInstance to name of the KeystoneAPI CR to select the Service
+                  instance used by the Cyborg services to authenticate.
                 type: string
               messagingBus:
                 description: MessagingBus configuration (username, vhost, and cluster)
@@ -637,46 +802,22 @@ spec:
                 additionalProperties:
                   type: string
                 description: |-
-                  NodeSelector to target subset of worker nodes running this component. Setting here overrides
-                  any global NodeSelector settings within the Watcher CR.
+                  NodeSelector to target subset of worker nodes running this service. Setting
+                  NodeSelector here acts as a default value and can be overridden by service
+                  specific NodeSelector Settings.
                 type: object
-              notificationsBus:
-                description: NotificationsBus configuration (username, vhost, and
-                  cluster) for notifications
-                properties:
-                  cluster:
-                    description: Name of the cluster
-                    minLength: 1
-                    type: string
-                  user:
-                    description: User - RabbitMQ username
-                    type: string
-                  vhost:
-                    description: Vhost - RabbitMQ vhost name
-                    type: string
-                required:
-                - cluster
-                type: object
-              notificationsBusInstance:
-                description: |-
-                  NotificationsBusInstance is the name of the RabbitMqCluster CR to select
-                  the Message Bus Service instance used by the Watcher service to publish and consume notifications
-                  from other services.
-                  If undefined, the value will be inherited from OpenStackControlPlane.
-                  An empty value "" leaves the notification drivers unconfigured and emitting no notifications at all.
-                  Avoid colocating it with RabbitMqClusterName or other message bus instances used for RPC.
-                  Deprecated: Use NotificationsBus.Cluster instead
-                type: string
               passwordSelectors:
                 default:
-                  service: WatcherPassword
-                description: PasswordSelectors - Selectors to identify the ServiceUser
-                  password from the Secret
+                  service: CyborgPassword
+                description: |-
+                  PasswordSelectors - Selectors to identify the DB and ServiceUser
+                  passwords from the Secret
                 properties:
                   service:
-                    default: WatcherPassword
-                    description: Service - Selector to get the watcher service user
-                      password from the Secret
+                    default: CyborgPassword
+                    description: |-
+                      Service - Selector to get the keystone service user password from the
+                      Secret
                     type: string
                 type: object
               preserveJobs:
@@ -684,22 +825,14 @@ spec:
                 description: PreserveJobs - do not delete jobs after they finished
                   e.g. to check logs
                 type: boolean
-              prometheusSecret:
-                default: metric-storage-prometheus-endpoint
-                description: Secret containing prometheus connection parameters
-                type: string
-              rabbitMqClusterName:
-                description: |-
-                  RabbitMQ instance name
-                  Needed to request a transportURL that is created and used in Watcher
-                  Deprecated: Use MessagingBus.Cluster instead
-                type: string
               secret:
                 default: osp-secret
-                description: Secret containing all passwords / keys needed
+                description: |-
+                  Secret is the name of the Secret instance containing password
+                  information for cyborg like the keystone service password and DB passwords
                 type: string
               serviceUser:
-                default: watcher
+                default: cyborg
                 description: ServiceUser - optional username used for this service
                   to register in keystone
                 type: string
@@ -721,34 +854,25 @@ spec:
                     type: string
                 type: object
             required:
+            - agentContainerImageURL
             - apiContainerImageURL
-            - apiServiceTemplate
-            - applierContainerImageURL
-            - applierServiceTemplate
-            - databaseInstance
-            - decisionengineContainerImageURL
-            - decisionengineServiceTemplate
+            - conductorContainerImageURL
             type: object
           status:
-            description: WatcherStatus defines the observed state of Watcher
+            description: CyborgStatus defines the observed state of Cyborg.
             properties:
               apiServiceReadyCount:
                 description: APIServiceReadyCount defines the number or replicas ready
-                  from watcher-api
+                  from cyborg-api
                 format: int32
                 type: integer
               applicationCredentialSecret:
                 description: |-
-                  ApplicationCredentialSecret - the AC secret watcher is currently
-                  consuming and protecting with the openstack.org/watcher-ac-consumer
+                  ApplicationCredentialSecret - the AC secret cyborg is currently
+                  consuming and protecting with the openstack.org/cyborg-ac-consumer
                   finalizer. Tracked so the controller can remove its finalizer from the
                   old secret when the openstack-operator rotates the reference.
                 type: string
-              applierServiceReadyCount:
-                description: ApplierServiceReadyCount defines the number or replicas
-                  ready from watcher-applier
-                format: int32
-                type: integer
               conditions:
                 description: Conditions
                 items:
@@ -791,39 +915,26 @@ spec:
                   - type
                   type: object
                 type: array
-              decisionengineServiceReadyCount:
-                description: DecisionEngineServiceReadyCount defines the number or
-                  replicas ready from watcher-decision-engine
+              conductorServiceReadyCount:
+                description: ConductorServiceReadyCount defines the number or replicas
+                  ready from cyborg-conductor
                 format: int32
                 type: integer
               hash:
                 additionalProperties:
                   type: string
-                description: Map of hashes to track e.g. job status
+                description: Hash - Map of hashes to track e.g. job status
                 type: object
-              notificationsTransportURLSecret:
-                description: |-
-                  NotificationsTransportURLSecret - the notifications transport URL secret
-                  watcher is currently consuming and protecting with the
-                  openstack.org/watcher-transport-consumer finalizer.
-                type: string
               observedGeneration:
                 description: |-
                   ObservedGeneration - the most recent generation observed for this
                   service. If the observed generation is less than the spec generation,
-                  then the controller has not processed the latest changes injected by
-                  the opentack-operator in the top-level CR (e.g. the ContainerImage)
+                  then the controller has not processed the latest changes.
                 format: int64
                 type: integer
               serviceID:
-                description: ServiceID - The ID of the watcher service registered
-                  in keystone
-                type: string
-              transportURLSecret:
-                description: |-
-                  TransportURLSecret - the transport URL secret watcher is currently
-                  consuming and protecting with the openstack.org/watcher-transport-consumer
-                  finalizer.
+                description: ServiceID - The ID of the cyborg service registered in
+                  keystone
                 type: string
             type: object
         type: object
