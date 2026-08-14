@@ -801,6 +801,12 @@ spec:
                   type: string
                 description: Map of hashes to track e.g. job status
                 type: object
+              notificationsTransportURLSecret:
+                description: |-
+                  NotificationsTransportURLSecret - the notifications transport URL secret
+                  watcher is currently consuming and protecting with the
+                  openstack.org/watcher-transport-consumer finalizer.
+                type: string
               observedGeneration:
                 description: |-
                   ObservedGeneration - the most recent generation observed for this
@@ -812,6 +818,12 @@ spec:
               serviceID:
                 description: ServiceID - The ID of the watcher service registered
                   in keystone
+                type: string
+              transportURLSecret:
+                description: |-
+                  TransportURLSecret - the transport URL secret watcher is currently
+                  consuming and protecting with the openstack.org/watcher-transport-consumer
+                  finalizer.
                 type: string
             type: object
         type: object

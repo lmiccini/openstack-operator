@@ -8,6 +8,7 @@ rules:
     - ""
   resources:
     - configmaps
+    - pods
     - secrets
     - services
   verbs:
@@ -18,13 +19,6 @@ rules:
     - patch
     - update
     - watch
-- apiGroups:
-    - ""
-  resources:
-    - pods
-  verbs:
-    - get
-    - list
 - apiGroups:
     - ""
   resources:
@@ -138,18 +132,6 @@ rules:
   resources:
     - ovndbclusters/status
   verbs:
-    - get
-    - list
-    - patch
-    - update
-    - watch
-- apiGroups:
-    - policy
-  resources:
-    - poddisruptionbudgets
-  verbs:
-    - create
-    - delete
     - get
     - list
     - patch
