@@ -12,32 +12,32 @@ require (
 	github.com/onsi/ginkgo/v2 v2.32.0
 	github.com/onsi/gomega v1.42.1
 	github.com/openshift/api v3.9.0+incompatible
-	github.com/openstack-k8s-operators/barbican-operator/api v0.6.1-0.20260810111433-1e154f0d531a
-	github.com/openstack-k8s-operators/cinder-operator/api v0.6.1-0.20260810111115-eacc8014f217
-	github.com/openstack-k8s-operators/designate-operator/api v0.6.1-0.20260808151439-cc79804c9365
-	github.com/openstack-k8s-operators/glance-operator/api v0.6.1-0.20260810111117-f8b13a41a488
-	github.com/openstack-k8s-operators/heat-operator/api v0.6.1-0.20260810111432-64b231fe1698
-	github.com/openstack-k8s-operators/horizon-operator/api v0.6.1-0.20260810111431-d81f9f14a460
+	github.com/openstack-k8s-operators/barbican-operator/api v0.6.1-0.20260718190801-c3e5d4310d2a
+	github.com/openstack-k8s-operators/cinder-operator/api v0.6.1-0.20260718193111-ae94e8400306
+	github.com/openstack-k8s-operators/designate-operator/api v0.6.1-0.20260718084238-e8741ebff581
+	github.com/openstack-k8s-operators/glance-operator/api v0.6.1-0.20260718191050-0456867891db
+	github.com/openstack-k8s-operators/heat-operator/api v0.6.1-0.20260718191337-97fcf4988779
+	github.com/openstack-k8s-operators/horizon-operator/api v0.6.1-0.20260718191627-f2f7cc147655
 	github.com/openstack-k8s-operators/infra-operator/apis v0.6.1-0.20260810103819-d7df699e8aa6
-	github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260808151134-24d5ad4c112f
-	github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260810111432-6927b8e4fa3f
-	github.com/openstack-k8s-operators/lib-common/modules/ansible v0.6.1-0.20260810100427-d0249ca0cf26
-	github.com/openstack-k8s-operators/lib-common/modules/certmanager v0.6.1-0.20260810100427-d0249ca0cf26
+	github.com/openstack-k8s-operators/ironic-operator/api v0.6.1-0.20260718191922-f78a06a7293f
+	github.com/openstack-k8s-operators/keystone-operator/api v0.6.1-0.20260718203920-ad47de5b3417
+	github.com/openstack-k8s-operators/lib-common/modules/ansible v0.6.1-0.20260717092345-ab1ee7b97c67
+	github.com/openstack-k8s-operators/lib-common/modules/certmanager v0.6.1-0.20260717092345-ab1ee7b97c67
 	github.com/openstack-k8s-operators/lib-common/modules/common v0.6.1-0.20260810100427-d0249ca0cf26
 	github.com/openstack-k8s-operators/lib-common/modules/storage v0.6.1-0.20260810100427-d0249ca0cf26
 	github.com/openstack-k8s-operators/lib-common/modules/test v0.6.1-0.20260810100427-d0249ca0cf26
-	github.com/openstack-k8s-operators/manila-operator/api v0.6.1-0.20260810111116-9833c22593de
-	github.com/openstack-k8s-operators/mariadb-operator/api v0.6.1-0.20260808151439-6972c7e5d3b5
-	github.com/openstack-k8s-operators/neutron-operator/api v0.6.1-0.20260810111116-917106d4616a
-	github.com/openstack-k8s-operators/nova-operator/api v0.6.1-0.20260808151744-b3775364c752
-	github.com/openstack-k8s-operators/octavia-operator/api v0.6.1-0.20260808151133-82a7a50a1529
-	github.com/openstack-k8s-operators/openstack-baremetal-operator/api v0.6.1-0.20260808151133-6c712dd689f1
+	github.com/openstack-k8s-operators/manila-operator/api v0.6.1-0.20260718191338-9471efd19aff
+	github.com/openstack-k8s-operators/mariadb-operator/api v0.6.1-0.20260719111650-de1f5daf20d2
+	github.com/openstack-k8s-operators/neutron-operator/api v0.6.1-0.20260718192500-4b87a5dd922e
+	github.com/openstack-k8s-operators/nova-operator/api v0.6.1-0.20260719064331-395d1d226d4d
+	github.com/openstack-k8s-operators/octavia-operator/api v0.6.1-0.20260718231036-37fbf50fef51
+	github.com/openstack-k8s-operators/openstack-baremetal-operator/api v0.6.1-0.20260718115006-7d7c29ae7d5a
 	github.com/openstack-k8s-operators/openstack-operator/api v0.0.0-00010101000000-000000000000
-	github.com/openstack-k8s-operators/ovn-operator/api v0.6.1-0.20260806101626-af8d24ac578b
-	github.com/openstack-k8s-operators/swift-operator/api v0.6.1-0.20260808090406-69a27807f42a
-	github.com/openstack-k8s-operators/telemetry-operator/api v0.6.1-0.20260810115223-6f72fb9e6155
-	github.com/openstack-k8s-operators/test-operator/api v0.6.1-0.20260810111432-04f82567e975
-	github.com/openstack-k8s-operators/watcher-operator/api v0.6.1-0.20260810142218-4d2e4f853116
+	github.com/openstack-k8s-operators/ovn-operator/api v0.6.1-0.20260719112229-53293aca1539
+	github.com/openstack-k8s-operators/swift-operator/api v0.6.1-0.20260718191049-db5be800fbb0
+	github.com/openstack-k8s-operators/telemetry-operator/api v0.6.1-0.20260719100625-00284fba95f9
+	github.com/openstack-k8s-operators/test-operator/api v0.6.1-0.20260719064617-f92ec1ab6b55
+	github.com/openstack-k8s-operators/watcher-operator/api v0.6.1-0.20260718115834-fae3078ef033
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.28.0
@@ -99,7 +99,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/openstack-k8s-operators/lib-common/modules/openstack v0.6.1-0.20260806140515-16161b7b6b53 // indirect
+	github.com/openstack-k8s-operators/lib-common/modules/openstack v0.6.1-0.20260810100427-d0249ca0cf26 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
@@ -179,3 +179,33 @@ replace k8s.io/component-base => k8s.io/component-base v0.33.13 //allow-merging
 replace k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20250627150254-e9823e99808e //allow-merging
 
 replace github.com/cert-manager/cmctl/v2 => github.com/cert-manager/cmctl/v2 v2.3.0 //allow-merging
+
+replace github.com/openstack-k8s-operators/lib-common/modules/common => github.com/lmiccini/lib-common/modules/common v0.0.0-20260814082436-299ce44a9dab
+
+replace github.com/openstack-k8s-operators/barbican-operator/api => github.com/lmiccini/barbican-operator/api v0.0.0-20260814132301-6c3a7af7efa4
+
+replace github.com/openstack-k8s-operators/cinder-operator/api => github.com/lmiccini/cinder-operator/api v0.0.0-20260814132301-28b68f9ee91a
+
+replace github.com/openstack-k8s-operators/designate-operator/api => github.com/lmiccini/designate-operator/api v0.0.0-20260814132301-0d16e445fe4f
+
+replace github.com/openstack-k8s-operators/glance-operator/api => github.com/lmiccini/glance-operator/api v0.0.0-20260814132301-326052d44073
+
+replace github.com/openstack-k8s-operators/heat-operator/api => github.com/lmiccini/heat-operator/api v0.0.0-20260814132301-14a908d5794c
+
+replace github.com/openstack-k8s-operators/ironic-operator/api => github.com/lmiccini/ironic-operator/api v0.0.0-20260814132301-15505648de5b
+
+replace github.com/openstack-k8s-operators/keystone-operator/api => github.com/lmiccini/keystone-operator/api v0.0.0-20260814132301-bd365870e665
+
+replace github.com/openstack-k8s-operators/manila-operator/api => github.com/lmiccini/manila-operator/api v0.0.0-20260814132301-b238ed1f14ae
+
+replace github.com/openstack-k8s-operators/neutron-operator/api => github.com/lmiccini/neutron-operator/api v0.0.0-20260814132301-daa56b863e21
+
+replace github.com/openstack-k8s-operators/nova-operator/api => github.com/lmiccini/nova-operator/api v0.0.0-20260814134313-21800cbfc6b6
+
+replace github.com/openstack-k8s-operators/octavia-operator/api => github.com/lmiccini/octavia-operator/api v0.0.0-20260814132301-175ca0ee75db
+
+replace github.com/openstack-k8s-operators/swift-operator/api => github.com/lmiccini/swift-operator/api v0.0.0-20260814132301-6fe95d99d37d
+
+replace github.com/openstack-k8s-operators/telemetry-operator/api => github.com/lmiccini/telemetry-operator/api v0.0.0-20260814132301-3e01cc1dad91
+
+replace github.com/openstack-k8s-operators/watcher-operator/api => github.com/lmiccini/watcher-operator/api v0.0.0-20260814132301-6a09ee72042b
